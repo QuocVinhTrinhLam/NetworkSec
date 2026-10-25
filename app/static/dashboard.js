@@ -18,6 +18,7 @@
     maintainAspectRatio: false,
     animation: reducedMotion ? false : { duration: 450 },
     interaction: { intersect: false, mode: "index" },
+    resizeDelay: 50,
     plugins: {
       legend: { display: false },
       tooltip: {
