@@ -1,0 +1,26 @@
+{
+  "_id": "demo-alert-100210",
+  "@timestamp": "2026-10-25T14:03:11.000Z",
+  "agent": {
+    "name": "core-router"
+  },
+  "decoder": {
+    "name": "mikrotik"
+  },
+  "rule": {
+    "id": "100210",
+    "level": 13,
+    "description": "Repeated SSH authentication failures",
+    "groups": ["authentication_failed", "brute_force"],
+    "mitre": {
+      "id": ["T1110"],
+      "technique": ["Brute Force"]
+    }
+  },
+  "data": {
+    "srcip": "203.0.113.5",
+    "dstip": "10.0.99.1",
+    "srcuser": "admin"
+  },
+  "full_log": "login failure for user admin from 203.0.113.5 via ssh"
+}

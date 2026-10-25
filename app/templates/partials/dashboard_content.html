@@ -1,0 +1,16 @@
+<div class="metric-grid">
+  <article class="metric panel"><span>Total alerts</span><strong>{{ stats.total }}</strong><small>last 24 hours</small></article>
+  {% for level in ['critical', 'high', 'medium', 'low'] %}
+    {% set row = stats.severity | selectattr('label', 'equalto', level) | first %}
+    <article class="metric panel severity-{{ level }}"><span>{{ level | title }}</span><strong>{{ row.value if row else 0 }}</strong><small>alerts</small></article>
+  {% endfor %}
+</div>
+<div class="chart-grid">
+  <article class="panel"><h2>Alerts over time</h2><canvas id="timeline-chart"></canvas></article>
+  <article class="panel"><h2>By severity</h2><canvas id="severity-chart"></canvas></article>
+  <article class="panel"><h2>By device type</h2><canvas id="device-chart"></canvas></article>
+  <article class="panel"><h2>Top source IPs</h2><ol class="ranked">{% for row in stats.top_sources %}<li><code>{{ row.label }}</code><strong>{{ row.value }}</strong></li>{% else %}<li>No data</li>{% endfor %}</ol></article>
+  <article class="panel span-2"><h2>Top triggered rules</h2><ol class="ranked">{% for row in stats.top_rules %}<li><span>{{ row.label }}</span><strong>{{ row.value }}</strong></li>{% else %}<li>No data</li>{% endfor %}</ol></article>
+</div>
+<script type="application/json" id="dashboard-data">{{ stats | tojson }}</script>
+<script src="{{ url_for('static', path='/dashboard.js') }}"></script>

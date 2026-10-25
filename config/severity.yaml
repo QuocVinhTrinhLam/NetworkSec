@@ -1,0 +1,13 @@
+severity:
+  low:
+    min: 0
+    max: 4
+  medium:
+    min: 5
+    max: 8
+  high:
+    min: 9
+    max: 12
+  critical:
+    min: 13
+    max: 15

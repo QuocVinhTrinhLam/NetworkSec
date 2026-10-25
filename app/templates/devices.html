@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block title %}Devices · {{ app_name }}{% endblock %}
+{% block content %}
+<div class="page-heading"><div><h1>Devices</h1><p class="muted">Silent after {{ silent_minutes }} minutes without an alert.</p></div></div>
+<div class="card-grid">{% for device in devices %}<article class="panel device-card"><div><h2>{{ device.device_name }}</h2><span class="badge {{ 'success' if device.status == 'active' else 'error' }}">{{ device.status }}</span></div><dl><dt>Type</dt><dd>{{ device.device_type }}</dd><dt>Last seen</dt><dd>{{ device.last_seen }}</dd><dt>Alert count</dt><dd>{{ device.alert_count }}</dd></dl></article>{% else %}<article class="panel">No devices have reported alerts.</article>{% endfor %}</div>
+{% endblock %}

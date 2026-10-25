@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block title %}Overview · {{ app_name }}{% endblock %}
+{% block content %}
+<div class="page-heading"><div><h1>Overview</h1><p class="muted">Alerts observed during the last 24 hours.</p></div></div>
+<section id="dashboard-content" hx-get="/partials/dashboard" hx-trigger="every 20s" hx-swap="innerHTML">
+  {% include "partials/dashboard_content.html" %}
+</section>
+{% endblock %}
