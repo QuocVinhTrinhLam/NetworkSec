@@ -37,8 +37,7 @@ Chạy trực tiếp khi phát triển:
 python3 -m venv .venv
 .venv/bin/pip install -r requirements-dev.txt
 cp .env.example .env
-set -a && source .env && set +a
-.venv/bin/uvicorn app.main:app --reload
+.venv/bin/uvicorn app.main:app --reload --env-file .env
 ```
 
 Tạo password hash mới:
