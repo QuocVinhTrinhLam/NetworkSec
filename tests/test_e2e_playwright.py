@@ -12,6 +12,7 @@ chuẩn đặt tên: TC-<ID>_<stt>_<slug-mo-ta>_<PASS|FAIL>.png
 
 from __future__ import annotations
 
+import json
 import socket
 import threading
 import time
@@ -373,3 +374,59 @@ def test_tc_scen_01_attack_scenarios_management_and_export(
     assert "T1046 - Network Service Scanning" in csv_content
     assert "nmap 7.94" in csv_content
     capture_evidence(page, "TC-SCEN-01", 4, "scenario-exported-csv", passed=True)
+
+
+def test_tc_dash_03_chart_layout_and_24h_timeline(
+    live_server: LiveTestServer, page: Page
+) -> None:
+    """TC-DASH-03: Kiểm tra hiển thị biểu đồ Donut, Timeline 24h và Refresh không biến mất.
+
+    Kiểm tra:
+    1. Donut "Severity mix": Wrapper chuẩn 180x180, có class .chart-ready, không bị cắt xén.
+    2. Biểu đồ đường "Alert activity": Vùng vẽ chiếm trọn thẻ (>= 240px), không co 40%.
+    3. Trục thời gian 24h: Dữ liệu #dashboard-data có đủ 24 buckets giờ liên tục.
+    4. Khi bấm Refresh: Canvas không bị biến mất, tái hiển thị tức thì không chớp tắt.
+    """
+    page.set_viewport_size({"width": 1280, "height": 800})
+
+    # Đăng nhập và vào Dashboard
+    page.goto(f"{live_server.url}/login")
+    page.fill('input[name="username"]', "admin")
+    page.fill('input[name="password"]', "test-password")
+    page.click('button[type="submit"]')
+    page.wait_for_url(f"{live_server.url}/dashboard")
+
+    # 1. Đợi biểu đồ sẵn sàng
+    page.wait_for_selector(".chart-wrap-donut.chart-ready")
+    expect(page.locator(".chart-wrap-donut .donut-total")).to_be_visible()
+
+    # 2. Kiểm tra dữ liệu 24 buckets giờ liên tục
+    data_text = page.locator("#dashboard-data").text_content() or "{}"
+    dashboard_data = json.loads(data_text)
+    assert "timeline" in dashboard_data
+    timeline_len = len(dashboard_data["timeline"])
+    assert timeline_len == 24, f"Timeline phải có đủ 24 bucket, nhưng có {timeline_len}"
+
+    # 3. Kiểm tra kích thước hình học của Donut và Timeline
+    donut_box = page.locator(".chart-wrap-donut").bounding_box()
+    assert donut_box is not None
+    assert round(donut_box["width"]) == 180
+    assert round(donut_box["height"]) == 180
+
+    timeline_box = page.locator(".chart-wrap-large").bounding_box()
+    assert timeline_box is not None
+    h = timeline_box["height"]
+    assert h >= 240, f"Chiều cao timeline phải >= 240px, thực tế: {h}"
+
+    capture_evidence(page, "TC-DASH-03", 1, "chart-layout-24h-verified", passed=True)
+
+    # 4. Kích hoạt nút Refresh và kiểm tra biểu đồ giữ nguyên
+    refresh_button = page.locator(".refresh-button")
+    refresh_button.click()
+    page.wait_for_timeout(200)
+
+    # Đảm bảo canvas vẫn hiển thị tốt
+    expect(page.locator("#severity-chart")).to_be_visible()
+    expect(page.locator("#timeline-chart")).to_be_visible()
+    capture_evidence(page, "TC-DASH-03", 2, "charts-persisted-after-refresh", passed=True)
+
