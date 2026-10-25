@@ -32,27 +32,69 @@
     },
   };
 
+  /**
+   * Khởi tạo và đăng ký một biểu đồ Chart.js mới vào danh sách quản lý window.dashboardCharts.
+   *
+   * @param {HTMLCanvasElement|null} canvas - Phần tử canvas mục tiêu trên DOM.
+   * @param {object} config - Cấu hình loại biểu đồ, tập dữ liệu và tùy chọn hiển thị.
+   * @returns {void}
+   */
   const createChart = (canvas, config) => {
     if (!canvas) return;
     window.dashboardCharts.push(new Chart(canvas, config));
   };
 
+  /**
+   * Giải phóng và hủy toàn bộ các phiên biểu đồ Chart.js đang hoạt động.
+   *
+   * Thao tác này bắt buộc phải thực thi trước khi HTMX hoán đổi innerHTML
+   * nhằm gỡ bỏ sạch sẽ các EventListener, ResizeObserver và tránh rò rỉ bộ nhớ
+   * (zombie instances) gây lỗi vòng lặp phóng to kích thước canvas.
+   *
+   * @returns {void}
+   */
+  const cleanupCharts = () => {
+    window.dashboardCharts = window.dashboardCharts || [];
+    window.dashboardCharts.forEach((chart) => {
+      try {
+        chart.destroy();
+      } catch (err) {
+        // Bỏ qua ngoại lệ nếu canvas đã bị tách khỏi cây DOM trong các chu trình trước
+      }
+    });
+    window.dashboardCharts = [];
+  };
+
+  /**
+   * Phân tích dữ liệu JSON viễn thông và khởi tạo lại 3 biểu đồ giám sát trên Dashboard.
+   *
+   * @returns {void}
+   */
   window.renderDashboardCharts = () => {
     const node = document.getElementById("dashboard-data");
     if (!node || typeof Chart === "undefined") return;
 
-    const data = JSON.parse(node.textContent);
-    window.dashboardCharts = window.dashboardCharts || [];
-    window.dashboardCharts.forEach((chart) => chart.destroy());
-    window.dashboardCharts = [];
+    let data;
+    try {
+      data = JSON.parse(node.textContent || "{}");
+    } catch {
+      return;
+    }
+
+    // Bảo đảm dọn dẹp mọi instance cũ trước khi dựng mới trên canvas vừa swap
+    cleanupCharts();
+
+    const timeline = Array.isArray(data.timeline) ? data.timeline : [];
+    const severity = Array.isArray(data.severity) ? data.severity : [];
+    const deviceTypes = Array.isArray(data.device_types) ? data.device_types : [];
 
     createChart(document.getElementById("timeline-chart"), {
       type: "line",
       data: {
-        labels: data.timeline.map((row) => row.label),
+        labels: timeline.map((row) => row.label),
         datasets: [{
           label: "Alerts",
-          data: data.timeline.map((row) => row.value),
+          data: timeline.map((row) => row.value),
           borderColor: "#00e5ff",
           backgroundColor: "rgba(48, 209, 88, 0.12)",
           borderWidth: 2,
@@ -70,10 +112,10 @@
     createChart(document.getElementById("severity-chart"), {
       type: "doughnut",
       data: {
-        labels: data.severity.map((row) => row.label),
+        labels: severity.map((row) => row.label),
         datasets: [{
-          data: data.severity.map((row) => row.value),
-          backgroundColor: data.severity.map((row) => colors[row.label] || "#8296aa"),
+          data: severity.map((row) => row.value),
+          backgroundColor: severity.map((row) => colors[row.label] || "#8296aa"),
           borderColor: "#1e1e1e",
           borderWidth: 4,
           hoverOffset: 3,
@@ -85,10 +127,10 @@
     createChart(document.getElementById("device-chart"), {
       type: "bar",
       data: {
-        labels: data.device_types.map((row) => row.label),
+        labels: deviceTypes.map((row) => row.label),
         datasets: [{
           label: "Alerts",
-          data: data.device_types.map((row) => row.value),
+          data: deviceTypes.map((row) => row.value),
           backgroundColor: "rgba(50, 215, 75, 0.7)",
           borderColor: "#32d74b",
           borderWidth: 1,
@@ -100,6 +142,11 @@
     });
   };
 
+  /**
+   * Cập nhật nhãn thời gian làm mới gần nhất trên thanh tiêu đề SOC Command Center.
+   *
+   * @returns {void}
+   */
   const markRefreshed = () => {
     const status = document.getElementById("last-updated");
     if (status) {
@@ -109,10 +156,23 @@
 
   window.renderDashboardCharts();
   markRefreshed();
+
+  // Dọn dẹp đồ thị cũ TRƯỚC KHI HTMX hoán đổi DOM nhằm tránh rò rỉ bộ nhớ và zombie instances
+  document.addEventListener("htmx:beforeSwap", (event) => {
+    if (event.target.id === "dashboard-content") {
+      cleanupCharts();
+    }
+  });
+
+  // Khởi tạo đồ thị SAU KHI HTMX hoàn tất swap DOM mới;
+  // Sử dụng requestAnimationFrame để đảm bảo trình duyệt đã hoàn tất chu trình tính toán
+  // kích thước layout (Reflow) cho các phần tử DOM mới, ngăn chặn kích thước canvas bị 0x0
   document.addEventListener("htmx:afterSwap", (event) => {
     if (event.target.id === "dashboard-content") {
-      window.renderDashboardCharts();
-      markRefreshed();
+      window.requestAnimationFrame(() => {
+        window.renderDashboardCharts();
+        markRefreshed();
+      });
     }
   });
 

@@ -134,7 +134,7 @@ code, time, .metric strong, .rank, .panel-meta {
   background: var(--panel);
   padding: 1.25rem; border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow);
 }
-.metric-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; }
+.metric-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1rem; }
 .metric { position: relative; display: flex; align-items: center; gap: .9rem; min-height: 124px; padding: 1.15rem; overflow: hidden; }
 .metric::after { content: ""; position: absolute; right: -24px; bottom: -48px; width: 100px; height: 100px; border: 1px solid currentColor; border-radius: 50%; opacity: .05; }
 .metric > div:last-child { display: grid; }
@@ -151,7 +151,7 @@ code, time, .metric strong, .rank, .panel-meta {
 .metric.severity-critical strong, .metric.severity-high strong, .metric.severity-medium strong, .metric.severity-low strong { color: var(--text); }
 
 .dashboard-grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 1rem; margin-top: 1rem; }
-.dashboard-grid > .panel { padding: 1.15rem; min-width: 0; }
+.dashboard-grid > .panel { padding: 1.15rem; min-width: 0; min-height: 0; }
 .timeline-panel { grid-column: span 8; }
 .severity-panel { grid-column: span 4; }
 .queue-panel { grid-column: span 8; }
@@ -163,11 +163,11 @@ code, time, .metric strong, .rank, .panel-meta {
 .panel-heading p { margin: 0; }
 .panel-meta { color: var(--subtle); font-size: .69rem; }
 .text-link { display: inline-flex; align-items: center; min-height: 44px; padding: 0 .25rem; font-size: .76rem; font-weight: 650; }
-.chart-wrap { position: relative; min-height: 245px; }
-.chart-wrap-large { min-height: 290px; }
-.chart-wrap canvas { width: 100% !important; height: 100% !important; }
-.donut-layout { display: grid; grid-template-columns: minmax(150px, 1fr) minmax(110px, .7fr); align-items: center; gap: .75rem; min-height: 290px; }
-.chart-wrap-donut { min-height: 210px; }
+.chart-wrap { position: relative; height: 245px; max-height: 245px; width: 100%; min-width: 0; }
+.chart-wrap-large { height: 290px; max-height: 290px; }
+.chart-wrap-donut { height: 210px; max-height: 210px; }
+.chart-wrap canvas { display: block; width: 100%; height: 100%; max-height: 100%; }
+.donut-layout { display: grid; grid-template-columns: minmax(150px, 1fr) minmax(110px, .7fr); align-items: center; gap: .75rem; min-height: 245px; height: 100%; }
 .donut-total { position: absolute; inset: 50% auto auto 50%; display: grid; text-align: center; transform: translate(-50%, -50%); line-height: 1; pointer-events: none; }
 .donut-total strong { font: 750 1.55rem/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .donut-total span { margin-top: .35rem; color: var(--subtle); font-size: .65rem; text-transform: uppercase; }
