@@ -22,7 +22,7 @@
       <div><p class="panel-kicker">Telemetry</p><h2>Alert activity</h2></div>
       <span class="panel-meta">24 hour window</span>
     </header>
-    <div class="chart-wrap chart-wrap-large">
+    <div class="chart-wrap chart-wrap-large" id="timeline-chart-wrap" hx-preserve="true">
       <canvas id="timeline-chart" role="img" aria-label="Line chart of alerts detected over the last 24 hours">Alert activity chart</canvas>
     </div>
     <details class="chart-data">
@@ -36,9 +36,9 @@
       <div><p class="panel-kicker">Risk profile</p><h2>Severity mix</h2></div>
     </header>
     <div class="donut-layout">
-      <div class="chart-wrap chart-wrap-donut">
+      <div class="chart-wrap chart-wrap-donut chart-ready" id="severity-chart-wrap" hx-preserve="true">
         <canvas id="severity-chart" role="img" aria-label="Doughnut chart of alerts by severity">Severity distribution chart</canvas>
-        <div class="donut-total" aria-hidden="true"><strong>{{ stats.total }}</strong><span>events</span></div>
+        <div class="donut-total" aria-hidden="true"><strong id="donut-total-count">{{ stats.total }}</strong><span>events</span></div>
       </div>
       <ul class="severity-legend" aria-label="Alerts by severity">
         {% for level, row in [('critical', critical), ('high', high), ('medium', medium), ('low', low)] %}
@@ -85,7 +85,7 @@
     <header class="panel-heading">
       <div><p class="panel-kicker">Asset visibility</p><h2>Events by device type</h2></div>
     </header>
-    <div class="chart-wrap">
+    <div class="chart-wrap" id="device-chart-wrap" hx-preserve="true">
       <canvas id="device-chart" role="img" aria-label="Bar chart of alerts by device type">Device type chart</canvas>
     </div>
     <details class="chart-data">

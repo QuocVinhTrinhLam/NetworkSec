@@ -38,43 +38,41 @@
   };
 
   /**
-   * Khởi tạo và đăng ký một biểu đồ Chart.js mới vào danh sách quản lý window.dashboardCharts.
-   *
-   * @param {HTMLCanvasElement|null} canvas - Phần tử canvas mục tiêu trên DOM.
-   * @param {object} config - Cấu hình loại biểu đồ, tập dữ liệu và tùy chọn hiển thị.
-   * @returns {void}
+   * Lưu trữ các instance Chart.js đang hoạt động để cập nhật trực tiếp (in-place update)
+   * khi có dữ liệu mới từ HTMX thay vì hủy và tạo lại từ đầu (remount),
+   * triệt tiêu hiện tượng layout shift và chớp tắt canvas.
    */
-  const createChart = (canvas, config) => {
-    if (!canvas) return;
-    window.dashboardCharts = window.dashboardCharts || [];
-    window.dashboardCharts.push(new Chart(canvas, config));
+  const chartRegistry = {
+    timeline: null,
+    severity: null,
+    device: null,
   };
 
   /**
    * Giải phóng và hủy toàn bộ các phiên biểu đồ Chart.js đang hoạt động.
    *
-   * Thao tác này dọn dẹp bộ nhớ và EventListeners trước khi khởi tạo lại trên canvas mới,
-   * ngăn chặn rò rỉ bộ nhớ (memory leaks) hoặc xung đột ResizeObserver.
-   *
    * @returns {void}
    */
   const cleanupCharts = () => {
-    window.dashboardCharts = window.dashboardCharts || [];
-    window.dashboardCharts.forEach((chart) => {
-      try {
-        chart.destroy();
-      } catch (err) {
-        // Bỏ qua nếu canvas đã bị tách khỏi DOM
+    Object.keys(chartRegistry).forEach((key) => {
+      if (chartRegistry[key]) {
+        try {
+          chartRegistry[key].destroy();
+        } catch (_) {
+          // Bỏ qua nếu canvas đã bị tách khỏi DOM
+        }
+        chartRegistry[key] = null;
       }
     });
     window.dashboardCharts = [];
   };
 
   /**
-   * Phân tích dữ liệu JSON và khởi tạo/cập nhật 3 biểu đồ giám sát trên Dashboard.
+   * Phân tích dữ liệu JSON và khởi tạo hoặc cập nhật in-place 3 biểu đồ giám sát trên Dashboard.
    *
-   * @param {boolean} [isRefresh=false] - Cờ xác định xem thao tác render có bắt nguồn từ sự kiện làm mới (refresh/swap) hay không.
-   * Khi làm mới, animation tắt (hoặc tức thì) để tránh việc biểu đồ bị xóa trắng 2-3s trước mắt người dùng.
+   * @param {boolean} [isRefresh=false] - Cờ xác định thao tác render bắt nguồn từ sự kiện làm mới (refresh/swap).
+   * Khi làm mới, animation tắt (hoặc tức thì) và dữ liệu được cập nhật trực tiếp vào Chart instance hiện có
+   * để giữ nguyên hình vẽ, không gây biến mất hoặc remount.
    * @returns {void}
    */
   window.renderDashboardCharts = (isRefresh = false) => {
@@ -88,9 +86,6 @@
       return;
     }
 
-    // Dọn dẹp instances cũ trước khi vẽ lên canvas mới
-    cleanupCharts();
-
     const timeline = Array.isArray(data.timeline) ? data.timeline : [];
     const severity = Array.isArray(data.severity) ? data.severity : [];
     const deviceTypes = Array.isArray(data.device_types) ? data.device_types : [];
@@ -100,91 +95,149 @@
     // 1. Biểu đồ đường Alert Activity (24-hour window)
     const timelineCanvas = document.getElementById("timeline-chart");
     if (timelineCanvas) {
-      createChart(timelineCanvas, {
-        type: "line",
-        data: {
-          labels: timeline.length > 0 ? timeline.map((row) => row.label) : ["No activity"],
-          datasets: [{
-            label: "Alerts",
-            data: timeline.length > 0 ? timeline.map((row) => row.value) : [0],
-            borderColor: "#00e5ff",
-            backgroundColor: "rgba(0, 229, 255, 0.12)",
-            borderWidth: 2,
-            pointRadius: timeline.length > 12 ? 3 : 4,
-            pointHoverRadius: 6,
-            pointBackgroundColor: "#080d14",
-            pointBorderColor: "#00e5ff",
-            fill: true,
-            tension: 0.3,
-          }],
-        },
-        options: {
-          ...baseOptions,
-          animation: animConfig,
-          maintainAspectRatio: false,
-          layout: {
-            padding: { left: 8, right: 16, top: 12, bottom: 4 },
+      const timelineLabels = timeline.length > 0 ? timeline.map((row) => row.label) : ["No activity"];
+      const timelineValues = timeline.length > 0 ? timeline.map((row) => row.value) : [0];
+
+      if (chartRegistry.timeline && chartRegistry.timeline.canvas === timelineCanvas) {
+        // Cập nhật dữ liệu in-place không remount canvas
+        chartRegistry.timeline.data.labels = timelineLabels;
+        chartRegistry.timeline.data.datasets[0].data = timelineValues;
+        chartRegistry.timeline.update("none");
+      } else {
+        if (chartRegistry.timeline) {
+          try { chartRegistry.timeline.destroy(); } catch (_) {}
+        }
+        chartRegistry.timeline = new Chart(timelineCanvas, {
+          type: "line",
+          data: {
+            labels: timelineLabels,
+            datasets: [{
+              label: "Alerts",
+              data: timelineValues,
+              borderColor: "#00e5ff",
+              backgroundColor: "rgba(0, 229, 255, 0.12)",
+              borderWidth: 2,
+              pointRadius: timeline.length > 12 ? 3 : 4,
+              pointHoverRadius: 6,
+              pointBackgroundColor: "#080d14",
+              pointBorderColor: "#00e5ff",
+              fill: true,
+              tension: 0.3,
+            }],
           },
-          scales: {
-            x: {
-              ...axis,
-              offset: true, // Thêm offset 2 đầu giúp điểm dữ liệu đầu tiên không đè lên trục Y
-              ticks: {
-                ...axis.ticks,
-                maxTicksLimit: 8, // Giới hạn số mốc giờ hiển thị để thoáng mắt trên 24 buckets
-                maxRotation: 0,
-                callback: function (val) {
-                  const label = this.getLabelForValue(val);
-                  if (typeof label === "string" && label.length >= 16) {
-                    return label.slice(11, 16); // Hiển thị "HH:00"
-                  }
-                  return label;
+          options: {
+            ...baseOptions,
+            animation: animConfig,
+            maintainAspectRatio: false,
+            layout: {
+              padding: { left: 8, right: 16, top: 12, bottom: 4 },
+            },
+            scales: {
+              x: {
+                ...axis,
+                offset: true,
+                ticks: {
+                  ...axis.ticks,
+                  maxTicksLimit: 8,
+                  maxRotation: 0,
+                  callback: function (val) {
+                    const label = this.getLabelForValue(val);
+                    if (typeof label === "string" && label.length >= 16) {
+                      return label.slice(11, 16);
+                    }
+                    return label;
+                  },
+                },
+              },
+              y: {
+                ...axis,
+                beginAtZero: true,
+                ticks: {
+                  ...axis.ticks,
+                  padding: 10,
+                  precision: 0,
                 },
               },
             },
-            y: {
-              ...axis,
-              beginAtZero: true,
-              ticks: {
-                ...axis.ticks,
-                padding: 10, // Đệm cách trục Y để tooltip và điểm không che nhãn số
-                precision: 0,
-              },
-            },
           },
-        },
-      });
+        });
+      }
     }
 
     // 2. Biểu đồ tròn Severity Mix (Donut chart)
     const severityCanvas = document.getElementById("severity-chart");
     if (severityCanvas) {
-      createChart(severityCanvas, {
-        type: "doughnut",
-        data: {
-          labels: severity.map((row) => row.label),
-          datasets: [{
-            data: severity.map((row) => row.value),
-            backgroundColor: severity.map((row) => colors[row.label] || "#8296aa"),
-            borderColor: "#101721",
-            borderWidth: 2,
-            hoverOffset: 4,
-          }],
-        },
-        options: {
-          ...baseOptions,
-          animation: animConfig,
-          responsive: true,
-          maintainAspectRatio: true, // Giữ tỷ lệ hình tròn 1:1 chuẩn, triệt tiêu co méo elip gây cắt xén
-          aspectRatio: 1,
-          cutout: "70%",
-          layout: {
-            padding: 6, // Đệm 6px bảo đảm lát cắt không bị clip ngoài biên canvas
-          },
-        },
-      });
+      const severityLabels = severity.length > 0 ? severity.map((row) => row.label) : ["No alerts"];
+      const severityValues = severity.length > 0 ? severity.map((row) => row.value) : [1];
+      const severityColors = severity.length > 0
+        ? severity.map((row) => colors[row.label] || "#8296aa")
+        : ["rgba(130, 150, 170, 0.2)"];
 
-      // Đánh dấu container sẵn sàng để hiển thị số events đồng bộ với vòng tròn
+      if (chartRegistry.severity && chartRegistry.severity.canvas === severityCanvas) {
+        // Cập nhật in-place không remount donut
+        chartRegistry.severity.data.labels = severityLabels;
+        chartRegistry.severity.data.datasets[0].data = severityValues;
+        chartRegistry.severity.data.datasets[0].backgroundColor = severityColors;
+        chartRegistry.severity.update("none");
+      } else {
+        if (chartRegistry.severity) {
+          try { chartRegistry.severity.destroy(); } catch (_) {}
+        }
+        chartRegistry.severity = new Chart(severityCanvas, {
+          type: "doughnut",
+          data: {
+            labels: severityLabels,
+            datasets: [{
+              data: severityValues,
+              backgroundColor: severityColors,
+              borderColor: "#101721",
+              borderWidth: 2,
+              hoverOffset: severity.length > 0 ? 4 : 0,
+            }],
+          },
+          options: {
+            ...baseOptions,
+            animation: (isRefresh || reducedMotion) ? false : {
+              duration: 350,
+              animateRotate: true,
+              animateScale: false,
+            },
+            responsive: true,
+            maintainAspectRatio: true,
+            aspectRatio: 1,
+            cutout: "70%",
+            layout: {
+              padding: 8, // Đệm 8px bảo đảm khi hover (+4px) không bị chạm biên canvas
+            },
+            interaction: {
+              mode: "nearest",
+              intersect: true, // Chỉ kích hoạt khi chạm đúng lát cắt, không bắt tâm rỗng
+            },
+            plugins: {
+              legend: { display: false },
+              tooltip: {
+                ...baseOptions.plugins.tooltip,
+                displayColors: true,
+                callbacks: {
+                  label: function (context) {
+                    const label = context.label || "";
+                    const val = context.parsed || 0;
+                    return ` ${label.charAt(0).toUpperCase() + label.slice(1)}: ${val} alerts`;
+                  },
+                },
+              },
+            },
+          },
+        });
+      }
+
+      // Cập nhật con số tổng số sự kiện trong tâm vòng donut
+      const donutTotalNode = document.getElementById("donut-total-count");
+      if (donutTotalNode && typeof data.total !== "undefined") {
+        donutTotalNode.textContent = String(data.total);
+      }
+
+      // Đánh dấu container sẵn sàng để hiển thị số events
       const donutWrap = severityCanvas.closest(".chart-wrap-donut");
       if (donutWrap) {
         donutWrap.classList.add("chart-ready");
@@ -194,30 +247,49 @@
     // 3. Biểu đồ cột Device Distribution
     const deviceCanvas = document.getElementById("device-chart");
     if (deviceCanvas) {
-      createChart(deviceCanvas, {
-        type: "bar",
-        data: {
-          labels: deviceTypes.map((row) => row.label),
-          datasets: [{
-            label: "Alerts",
-            data: deviceTypes.map((row) => row.value),
-            backgroundColor: "rgba(60, 200, 255, 0.7)",
-            borderColor: "#3cc8ff",
-            borderWidth: 1,
-            borderRadius: 4,
-            maxBarThickness: 34,
-          }],
-        },
-        options: {
-          ...baseOptions,
-          animation: animConfig,
-          scales: {
-            x: axis,
-            y: { ...axis, beginAtZero: true, ticks: { ...axis.ticks, precision: 0 } },
+      const deviceLabels = deviceTypes.map((row) => row.label);
+      const deviceValues = deviceTypes.map((row) => row.value);
+
+      if (chartRegistry.device && chartRegistry.device.canvas === deviceCanvas) {
+        chartRegistry.device.data.labels = deviceLabels;
+        chartRegistry.device.data.datasets[0].data = deviceValues;
+        chartRegistry.device.update("none");
+      } else {
+        if (chartRegistry.device) {
+          try { chartRegistry.device.destroy(); } catch (_) {}
+        }
+        chartRegistry.device = new Chart(deviceCanvas, {
+          type: "bar",
+          data: {
+            labels: deviceLabels,
+            datasets: [{
+              label: "Alerts",
+              data: deviceValues,
+              backgroundColor: "rgba(60, 200, 255, 0.7)",
+              borderColor: "#3cc8ff",
+              borderWidth: 1,
+              borderRadius: 4,
+              maxBarThickness: 34,
+            }],
           },
-        },
-      });
+          options: {
+            ...baseOptions,
+            animation: animConfig,
+            scales: {
+              x: axis,
+              y: { ...axis, beginAtZero: true, ticks: { ...axis.ticks, precision: 0 } },
+            },
+          },
+        });
+      }
     }
+
+    // Cung cấp danh sách biểu đồ đang chạy cho window.dashboardCharts
+    window.dashboardCharts = [
+      chartRegistry.timeline,
+      chartRegistry.severity,
+      chartRegistry.device,
+    ].filter(Boolean);
   };
 
   /**
@@ -252,13 +324,11 @@
   }
 
   // Khi HTMX hoàn tất swap DOM mới:
-  // Tái tạo lại đồ thị ngay trong frame hiển thị với animation=false để không gây giật/chớp tắt canvas
+  // Cập nhật dữ liệu tức thì lên các biểu đồ được bảo lưu (hx-preserve), không remount
   document.addEventListener("htmx:afterSwap", (event) => {
     if (event.target.id === "dashboard-content") {
-      window.requestAnimationFrame(() => {
-        window.renderDashboardCharts(true);
-        markRefreshed();
-      });
+      window.renderDashboardCharts(true);
+      markRefreshed();
     }
   });
 

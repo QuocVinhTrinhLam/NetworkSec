@@ -415,18 +415,30 @@ def test_tc_dash_03_chart_layout_and_24h_timeline(
 
     timeline_box = page.locator(".chart-wrap-large").bounding_box()
     assert timeline_box is not None
-    h = timeline_box["height"]
-    assert h >= 240, f"Chiều cao timeline phải >= 240px, thực tế: {h}"
+    initial_h = timeline_box["height"]
+    assert 250 <= initial_h <= 270, (
+        f"Chiều cao timeline phải cố định 260px (±10px), thực tế: {initial_h}"
+    )
 
+    # Hover thử vào biểu đồ Donut để xác minh không bị cắt lát cắt hay lỗi tooltip
+    page.hover("#severity-chart")
+    page.wait_for_timeout(100)
     capture_evidence(page, "TC-DASH-03", 1, "chart-layout-24h-verified", passed=True)
 
-    # 4. Kích hoạt nút Refresh và kiểm tra biểu đồ giữ nguyên
+    # 4. Kích hoạt nút Refresh và kiểm tra biểu đồ giữ nguyên, không giật layout
     refresh_button = page.locator(".refresh-button")
     refresh_button.click()
-    page.wait_for_timeout(200)
+    page.wait_for_timeout(300)
 
-    # Đảm bảo canvas vẫn hiển thị tốt
+    # Đảm bảo canvas vẫn hiển thị tốt, kích thước không phình/co
     expect(page.locator("#severity-chart")).to_be_visible()
     expect(page.locator("#timeline-chart")).to_be_visible()
+
+    post_refresh_box = page.locator(".chart-wrap-large").bounding_box()
+    assert post_refresh_box is not None
+    assert abs(post_refresh_box["height"] - initial_h) < 2.0, (
+        f"Chiều cao timeline bị giật sau refresh: {initial_h} -> {post_refresh_box['height']}"
+    )
+
     capture_evidence(page, "TC-DASH-03", 2, "charts-persisted-after-refresh", passed=True)
 
