@@ -92,22 +92,29 @@
     createChart(document.getElementById("timeline-chart"), {
       type: "line",
       data: {
-        labels: timeline.map((row) => row.label),
+        labels: timeline.length > 0 ? timeline.map((row) => row.label) : ["No activity"],
         datasets: [{
           label: "Alerts",
-          data: timeline.map((row) => row.value),
+          data: timeline.length > 0 ? timeline.map((row) => row.value) : [0],
           borderColor: "#00e5ff",
           backgroundColor: "rgba(48, 209, 88, 0.12)",
           borderWidth: 2,
-          pointRadius: 2,
-          pointHoverRadius: 5,
+          pointRadius: 4,
+          pointHoverRadius: 6,
           pointBackgroundColor: "#121212",
           pointBorderColor: "#00e5ff",
           fill: true,
           tension: 0.35,
         }],
       },
-      options: { ...baseOptions, scales: { x: axis, y: { ...axis, beginAtZero: true, ticks: { ...axis.ticks, precision: 0 } } } },
+      options: {
+        ...baseOptions,
+        maintainAspectRatio: false,
+        scales: {
+          x: axis,
+          y: { ...axis, beginAtZero: true, ticks: { ...axis.ticks, precision: 0 } },
+        },
+      },
     });
 
     createChart(document.getElementById("severity-chart"), {
@@ -118,11 +125,16 @@
           data: severity.map((row) => row.value),
           backgroundColor: severity.map((row) => colors[row.label] || "#8296aa"),
           borderColor: "#1e1e1e",
-          borderWidth: 4,
+          borderWidth: 3,
           hoverOffset: 3,
         }],
       },
-      options: { ...baseOptions, cutout: "74%" },
+      options: {
+        ...baseOptions,
+        maintainAspectRatio: true,
+        aspectRatio: 1,
+        cutout: "72%",
+      },
     });
 
     createChart(document.getElementById("device-chart"), {

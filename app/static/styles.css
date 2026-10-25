@@ -165,11 +165,10 @@ code, time, .metric strong, .rank, .panel-meta {
 .panel-heading p { margin: 0; }
 .panel-meta { color: var(--subtle); font-size: .69rem; }
 .text-link { display: inline-flex; align-items: center; min-height: 44px; padding: 0 .25rem; font-size: .76rem; font-weight: 650; }
-.chart-wrap { position: relative; height: 245px; max-height: 245px; width: 100%; min-width: 0; }
-.chart-wrap-large { height: 290px; max-height: 290px; }
-.chart-wrap-donut { position: relative; display: flex; align-items: center; justify-content: center; height: 210px; max-height: 210px; width: 100%; margin: 0 auto; }
-.chart-wrap canvas { display: block; width: 100%; height: 100%; max-height: 100%; }
-.donut-layout { display: grid; grid-template-columns: minmax(150px, 1fr) minmax(110px, .7fr); align-items: center; justify-items: center; gap: 1rem; min-height: 245px; height: 100%; }
+.chart-wrap { position: relative; width: 100%; height: 240px; min-width: 0; }
+.chart-wrap-large { height: 260px; }
+.donut-layout { display: flex; align-items: center; justify-content: center; gap: 1.5rem; height: 260px; min-height: 260px; }
+.chart-wrap-donut { position: relative; width: 180px; height: 180px; flex: 0 0 180px; margin: 0; }
 .donut-total { position: absolute; inset: 50% auto auto 50%; display: grid; text-align: center; transform: translate(-50%, -50%); line-height: 1; pointer-events: none; }
 .donut-total strong { font: 750 1.55rem/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .donut-total span { margin-top: .35rem; color: var(--subtle); font-size: .65rem; text-transform: uppercase; }
