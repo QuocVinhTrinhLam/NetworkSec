@@ -1,6 +1,6 @@
 (() => {
   const colors = {
-    critical: "#ff6077",
+    critical: "#ff453a",
     high: "#ff9f43",
     medium: "#f5cb5c",
     low: "#56c2ff",
@@ -53,13 +53,13 @@
         datasets: [{
           label: "Alerts",
           data: data.timeline.map((row) => row.value),
-          borderColor: "#42d7ff",
-          backgroundColor: "rgba(66, 215, 255, 0.11)",
+          borderColor: "#00e5ff",
+          backgroundColor: "rgba(48, 209, 88, 0.12)",
           borderWidth: 2,
           pointRadius: 2,
           pointHoverRadius: 5,
-          pointBackgroundColor: "#07111c",
-          pointBorderColor: "#42d7ff",
+          pointBackgroundColor: "#121212",
+          pointBorderColor: "#00e5ff",
           fill: true,
           tension: 0.35,
         }],
@@ -74,7 +74,7 @@
         datasets: [{
           data: data.severity.map((row) => row.value),
           backgroundColor: data.severity.map((row) => colors[row.label] || "#8296aa"),
-          borderColor: "#0d1a28",
+          borderColor: "#1e1e1e",
           borderWidth: 4,
           hoverOffset: 3,
         }],
@@ -89,8 +89,8 @@
         datasets: [{
           label: "Alerts",
           data: data.device_types.map((row) => row.value),
-          backgroundColor: "rgba(57, 217, 138, 0.7)",
-          borderColor: "#39d98a",
+          backgroundColor: "rgba(50, 215, 75, 0.7)",
+          borderColor: "#32d74b",
           borderWidth: 1,
           borderRadius: 4,
           maxBarThickness: 34,

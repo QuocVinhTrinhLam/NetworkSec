@@ -55,7 +55,7 @@
     </header>
     <div class="alert-feed">
       {% for alert in recent_alerts %}
-      <a class="alert-row" href="/alerts/{{ alert.id }}">
+      <a class="alert-row alert-{{ alert.severity }}" href="/alerts/{{ alert.id }}">
         <span class="feed-severity severity-bg-{{ alert.severity }}" aria-hidden="true"></span>
         <span class="alert-main">
           <span><span class="badge severity-{{ alert.severity }}">{{ alert.severity }}</span><strong>{{ alert.rule_description }}</strong></span>
