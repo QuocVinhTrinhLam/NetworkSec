@@ -6,7 +6,7 @@ import json
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -360,13 +360,33 @@ class Database:
                 """,
                 (modifier,),
             ).fetchall()
+
+            # Tạo chuỗi bucket giờ liên tục cho toàn bộ cửa sổ quan sát (hours)
+            # Giúp biểu đồ đường hiển thị đầy đủ 24 mốc giờ (kể cả giờ không có cảnh báo: value = 0)
+            now_dt = datetime.now(UTC)
+            timeline_buckets: dict[str, int] = {}
+            for h in range(hours - 1, -1, -1):
+                bucket_time = now_dt - timedelta(hours=h)
+                bucket_label = bucket_time.strftime("%Y-%m-%d %H:00")
+                timeline_buckets[bucket_label] = 0
+
+            # Cập nhật số lượng sự kiện thực tế từ cơ sở dữ liệu vào các bucket tương ứng
+            for row in timeline:
+                row_dict = dict(row)
+                lbl = row_dict["label"]
+                timeline_buckets[lbl] = int(row_dict["value"])
+
+            timeline_data = [
+                {"label": lbl, "value": val}
+                for lbl, val in sorted(timeline_buckets.items())
+            ]
         return {
             "total": int(total),
             "severity": [dict(row) for row in severity],
             "device_types": [dict(row) for row in device_types],
             "top_sources": [dict(row) for row in top_sources],
             "top_rules": [dict(row) for row in top_rules],
-            "timeline": [dict(row) for row in timeline],
+            "timeline": timeline_data,
         }
 
     def devices(self, silent_minutes: int) -> list[dict[str, Any]]:
