@@ -1,8 +1,26 @@
 {% extends "base.html" %}
-{% block title %}Overview · {{ app_name }}{% endblock %}
+{% block title %}SOC Command Center · {{ app_name }}{% endblock %}
 {% block content %}
-<div class="page-heading"><div><h1>Overview</h1><p class="muted">Alerts observed during the last 24 hours.</p></div></div>
-<section id="dashboard-content" hx-get="/partials/dashboard" hx-trigger="every 20s" hx-swap="innerHTML">
+<div class="page-heading dashboard-heading">
+  <div>
+    <p class="eyebrow">Security operations / overview</p>
+    <h1>SOC Command Center</h1>
+    <p class="muted">Monitor, triage and investigate network threats from one operational view.</p>
+  </div>
+  <div class="heading-actions">
+    <span class="refresh-status" aria-live="polite">
+      <span class="status-dot" aria-hidden="true"></span>
+      <span id="last-updated">Live telemetry</span>
+    </span>
+    <button class="icon-button refresh-button" type="button" aria-label="Refresh dashboard" title="Refresh dashboard"
+            hx-get="/partials/dashboard" hx-target="#dashboard-content" hx-swap="innerHTML">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6v5h-5M4 18v-5h5"/><path d="M6.1 9A7 7 0 0 1 18.5 6.5L20 11M4 13l1.5 4.5A7 7 0 0 0 17.9 15"/></svg>
+    </button>
+  </div>
+</div>
+
+<section id="dashboard-content" aria-label="Live security overview">
   {% include "partials/dashboard_content.html" %}
 </section>
+<script defer src="{{ url_for('static', path='/dashboard.js') }}"></script>
 {% endblock %}

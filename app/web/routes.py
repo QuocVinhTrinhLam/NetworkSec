@@ -93,10 +93,15 @@ def create_router(database: Database, settings: Settings, templates: Jinja2Templ
         request: Request,
         _user: Annotated[str, Depends(require_user)],
     ) -> Response:
+        recent_alerts, _ = database.search_alerts(hours=24, page_size=6)
         return templates.TemplateResponse(
             request,
             "dashboard.html",
-            context(request, stats=database.dashboard_stats()),
+            context(
+                request,
+                stats=database.dashboard_stats(),
+                recent_alerts=recent_alerts,
+            ),
         )
 
     @router.get("/partials/dashboard", response_class=HTMLResponse)
@@ -104,10 +109,15 @@ def create_router(database: Database, settings: Settings, templates: Jinja2Templ
         request: Request,
         _user: Annotated[str, Depends(require_user)],
     ) -> Response:
+        recent_alerts, _ = database.search_alerts(hours=24, page_size=6)
         return templates.TemplateResponse(
             request,
             "partials/dashboard_content.html",
-            context(request, stats=database.dashboard_stats()),
+            context(
+                request,
+                stats=database.dashboard_stats(),
+                recent_alerts=recent_alerts,
+            ),
         )
 
     def parse_hours(value: str) -> int | None:

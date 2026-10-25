@@ -1,16 +1,109 @@
+{% set critical = stats.severity | selectattr('label', 'equalto', 'critical') | first %}
+{% set high = stats.severity | selectattr('label', 'equalto', 'high') | first %}
+{% set medium = stats.severity | selectattr('label', 'equalto', 'medium') | first %}
+{% set low = stats.severity | selectattr('label', 'equalto', 'low') | first %}
+
 <div class="metric-grid">
-  <article class="metric panel"><span>Total alerts</span><strong>{{ stats.total }}</strong><small>last 24 hours</small></article>
-  {% for level in ['critical', 'high', 'medium', 'low'] %}
-    {% set row = stats.severity | selectattr('label', 'equalto', level) | first %}
-    <article class="metric panel severity-{{ level }}"><span>{{ level | title }}</span><strong>{{ row.value if row else 0 }}</strong><small>alerts</small></article>
+  <article class="metric panel metric-total">
+    <div class="metric-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 19V9M10 19V5M16 19v-7M22 19V3"/></svg></div>
+    <div><span>Total alerts</span><strong>{{ stats.total }}</strong><small>Last 24 hours</small></div>
+  </article>
+  {% for level, row in [('critical', critical), ('high', high), ('medium', medium), ('low', low)] %}
+  <article class="metric panel severity-{{ level }}">
+    <div class="severity-mark" aria-hidden="true"></div>
+    <div><span>{{ level | title }}</span><strong>{{ row.value if row else 0 }}</strong><small>{{ level }} priority</small></div>
+  </article>
   {% endfor %}
 </div>
-<div class="chart-grid">
-  <article class="panel"><h2>Alerts over time</h2><canvas id="timeline-chart"></canvas></article>
-  <article class="panel"><h2>By severity</h2><canvas id="severity-chart"></canvas></article>
-  <article class="panel"><h2>By device type</h2><canvas id="device-chart"></canvas></article>
-  <article class="panel"><h2>Top source IPs</h2><ol class="ranked">{% for row in stats.top_sources %}<li><code>{{ row.label }}</code><strong>{{ row.value }}</strong></li>{% else %}<li>No data</li>{% endfor %}</ol></article>
-  <article class="panel span-2"><h2>Top triggered rules</h2><ol class="ranked">{% for row in stats.top_rules %}<li><span>{{ row.label }}</span><strong>{{ row.value }}</strong></li>{% else %}<li>No data</li>{% endfor %}</ol></article>
+
+<div class="dashboard-grid">
+  <article class="panel chart-panel timeline-panel">
+    <header class="panel-heading">
+      <div><p class="panel-kicker">Telemetry</p><h2>Alert activity</h2></div>
+      <span class="panel-meta">24 hour window</span>
+    </header>
+    <div class="chart-wrap chart-wrap-large">
+      <canvas id="timeline-chart" role="img" aria-label="Line chart of alerts detected over the last 24 hours">Alert activity chart</canvas>
+    </div>
+    <details class="chart-data">
+      <summary>View chart data</summary>
+      <ul>{% for row in stats.timeline %}<li><span>{{ row.label }}</span><strong>{{ row.value }}</strong></li>{% else %}<li>No alert activity in this window.</li>{% endfor %}</ul>
+    </details>
+  </article>
+
+  <article class="panel chart-panel severity-panel">
+    <header class="panel-heading">
+      <div><p class="panel-kicker">Risk profile</p><h2>Severity mix</h2></div>
+    </header>
+    <div class="donut-layout">
+      <div class="chart-wrap chart-wrap-donut">
+        <canvas id="severity-chart" role="img" aria-label="Doughnut chart of alerts by severity">Severity distribution chart</canvas>
+        <div class="donut-total" aria-hidden="true"><strong>{{ stats.total }}</strong><span>events</span></div>
+      </div>
+      <ul class="severity-legend" aria-label="Alerts by severity">
+        {% for level, row in [('critical', critical), ('high', high), ('medium', medium), ('low', low)] %}
+        <li><span><i class="legend-dot severity-bg-{{ level }}" aria-hidden="true"></i>{{ level | title }}</span><strong>{{ row.value if row else 0 }}</strong></li>
+        {% endfor %}
+      </ul>
+    </div>
+  </article>
+
+  <article class="panel queue-panel">
+    <header class="panel-heading">
+      <div><p class="panel-kicker">Triage</p><h2>Investigation queue</h2></div>
+      <a class="text-link" href="/alerts">View all alerts <span aria-hidden="true">→</span></a>
+    </header>
+    <div class="alert-feed">
+      {% for alert in recent_alerts %}
+      <a class="alert-row" href="/alerts/{{ alert.id }}">
+        <span class="feed-severity severity-bg-{{ alert.severity }}" aria-hidden="true"></span>
+        <span class="alert-main">
+          <span><span class="badge severity-{{ alert.severity }}">{{ alert.severity }}</span><strong>{{ alert.rule_description }}</strong></span>
+          <small><code>{{ alert.id }}</code> · {{ alert.device_name }} · {{ alert.source_ip or 'source unknown' }}</small>
+        </span>
+        <time datetime="{{ alert.timestamp }}">{{ alert.timestamp }}</time>
+        <span class="row-arrow" aria-hidden="true">→</span>
+      </a>
+      {% else %}
+      <div class="empty-state"><span aria-hidden="true">✓</span><strong>No alerts in the last 24 hours</strong><p>The investigation queue is clear.</p></div>
+      {% endfor %}
+    </div>
+  </article>
+
+  <article class="panel source-panel">
+    <header class="panel-heading">
+      <div><p class="panel-kicker">Network origin</p><h2>Top source IPs</h2></div>
+    </header>
+    <ol class="ranked threat-list">
+      {% for row in stats.top_sources %}
+      <li><span class="rank">{{ '%02d' | format(loop.index) }}</span><code>{{ row.label }}</code><progress class="bar-track" value="{{ row.value }}" max="{{ stats.top_sources[0].value }}" aria-label="{{ row.value }} alerts"></progress><strong>{{ row.value }}</strong></li>
+      {% else %}<li class="empty-list">No source data available.</li>{% endfor %}
+    </ol>
+  </article>
+
+  <article class="panel chart-panel device-panel">
+    <header class="panel-heading">
+      <div><p class="panel-kicker">Asset visibility</p><h2>Events by device type</h2></div>
+    </header>
+    <div class="chart-wrap">
+      <canvas id="device-chart" role="img" aria-label="Bar chart of alerts by device type">Device type chart</canvas>
+    </div>
+    <details class="chart-data">
+      <summary>View chart data</summary>
+      <ul>{% for row in stats.device_types %}<li><span>{{ row.label }}</span><strong>{{ row.value }}</strong></li>{% else %}<li>No device data available.</li>{% endfor %}</ul>
+    </details>
+  </article>
+
+  <article class="panel rules-panel">
+    <header class="panel-heading">
+      <div><p class="panel-kicker">Detection intelligence</p><h2>Top triggered rules</h2></div>
+    </header>
+    <ol class="ranked rules-list">
+      {% for row in stats.top_rules %}
+      <li><span class="rank">{{ '%02d' | format(loop.index) }}</span><span>{{ row.label }}</span><strong>{{ row.value }}</strong></li>
+      {% else %}<li class="empty-list">No triggered rules in this window.</li>{% endfor %}
+    </ol>
+  </article>
 </div>
+
 <script type="application/json" id="dashboard-data">{{ stats | tojson }}</script>
-<script src="{{ url_for('static', path='/dashboard.js') }}"></script>

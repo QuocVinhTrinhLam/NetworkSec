@@ -11,3 +11,7 @@ data/
 *.db
 *.db-shm
 *.db-wal
+
+# Local AI agent configuration and machine-specific paths
+.agents/
+AGENTS.md

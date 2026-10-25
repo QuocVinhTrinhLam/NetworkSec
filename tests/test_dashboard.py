@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -84,6 +85,43 @@ def test_device_becomes_silent(tmp_path: Path) -> None:
         page = client.get("/devices")
         assert page.status_code == 200
         assert "silent" in page.text
+
+
+def test_dashboard_renders_soc_command_center_and_live_queue(tmp_path: Path) -> None:
+    with build_client(tmp_path) as client:
+        client.app.state.database.insert_alert(
+            Alert(
+                id="live-critical-alert",
+                timestamp=datetime.now(UTC).isoformat(timespec="seconds"),
+                device_name="edge-fw-01",
+                device_type="firewall",
+                source_ip="198.51.100.23",
+                dest_ip="10.0.0.10",
+                user="soc-analyst",
+                rule_id="100900",
+                rule_description='Suspicious </script><script>alert("owned")</script> access',
+                severity="critical",
+                mitre_id="T1078",
+                mitre_name="Valid Accounts",
+                raw_log="authentication anomaly",
+            )
+        )
+        login(client)
+
+        page = client.get("/dashboard")
+
+        assert page.status_code == 200
+        assert "SOC Command Center" in page.text
+        assert 'aria-label="Primary navigation"' in page.text
+        assert 'aria-current="page"' in page.text
+        assert "Investigation queue" in page.text
+        assert "live-critical-alert" in page.text
+        assert "edge-fw-01" in page.text
+        assert '</script><script>alert("owned")</script>' not in page.text
+
+        partial = client.get("/partials/dashboard")
+        assert partial.status_code == 200
+        assert '</script><script>alert("owned")</script>' not in partial.text
 
 
 def test_attack_scenario_requires_csrf_and_exports_csv(tmp_path: Path) -> None:
