@@ -254,6 +254,25 @@ async def test_dedup_edits_one_message_instead_of_sending_duplicates(tmp_path: P
 
 
 @pytest.mark.asyncio
+async def test_thirty_repeated_events_produce_one_message_with_counter(tmp_path: Path) -> None:
+    alerts = [_alert(f"{index:064x}") for index in range(30)]
+    database = FakeDatabase(tmp_path / "thirty-events.db", alerts)
+    gateway = FakeGateway()
+    settings = Settings(
+        database_path=database.path,
+        allowed_chat_ids={1234},
+        minimum_severity="low",
+    )
+
+    processed = await NotificationWorker(settings, database, gateway).run_once()  # type: ignore[arg-type]
+
+    assert processed == 30
+    assert len(gateway.sent) == 1
+    assert len(gateway.edited) == 29
+    assert "Count: <b>30</b>" in gateway.edited[-1][2]
+
+
+@pytest.mark.asyncio
 async def test_rate_limit_uses_one_updating_summary_with_top_rules(tmp_path: Path) -> None:
     alerts = [
         {**_alert("a" * 64, "rule-a"), "source_ip": "203.0.113.1"},
