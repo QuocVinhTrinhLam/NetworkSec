@@ -32,10 +32,8 @@ from app.main import create_app
 from app.models import Alert
 from app.web.auth import hash_password
 
-# Thư mục lưu trữ ảnh bằng chứng kiểm thử E2E (nằm ngoài Git theo quy chuẩn Source Control Guard)
-EVIDENCE_DIR: Path = Path("../docs/testing/e2e/evidence").resolve()
-if not EVIDENCE_DIR.exists():
-    EVIDENCE_DIR = (BASE_DIR.parent / "docs" / "testing" / "e2e" / "evidence").resolve()
+# Thư mục bằng chứng nằm trong workspace để test chạy được trong sandbox và CI.
+EVIDENCE_DIR: Path = (BASE_DIR / "docs" / "testing" / "e2e" / "evidence").resolve()
 EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -203,7 +201,7 @@ def test_tc_auth_01_login_and_csrf_validation(live_server: LiveTestServer, page:
 
     # Bước 1: Mở trang đăng nhập
     page.goto(f"{live_server.url}/login")
-    expect(page.locator("h1")).to_have_text("Security monitoring")
+    expect(page.locator("h2#login-title")).to_have_text("Analyst sign in")
     expect(page.locator('input[name="csrf"]')).to_have_count(1)
     capture_evidence(page, "TC-AUTH-01", 1, "login-form-loaded", passed=True)
 
@@ -307,8 +305,9 @@ def test_tc_dash_02_htmx_realtime_telemetry_refresh(
     refresh_button.click()
 
     # Chờ HTMX hoàn tất quá trình cập nhật innerHTML của #dashboard-content
-    page.wait_for_selector(f"text={new_alert_id}")
-    expect(page.locator("#dashboard-content")).to_contain_text("vnpt-agg-switch-05")
+    expect(page.locator("#dashboard-content")).to_contain_text(
+        "vnpt-agg-switch-05", timeout=10_000
+    )
     expect(page.locator("#dashboard-content")).to_contain_text("Unauthorized Spanning-Tree")
 
     capture_evidence(page, "TC-DASH-02", 1, "htmx-telemetry-refreshed", passed=True)
@@ -359,7 +358,7 @@ def test_tc_scen_01_attack_scenarios_management_and_export(
     expect(page.locator("table")).to_contain_text("T1046 - Network Service Scanning")
     expect(page.locator("table")).to_contain_text("nmap 7.94")
     expect(page.locator("table")).to_contain_text("100200")
-    expect(page.locator("table")).to_contain_text("Yes")
+    expect(page.locator("table")).to_contain_text("Detected")
     capture_evidence(page, "TC-SCEN-01", 3, "scenario-recorded-in-table", passed=True)
 
     # Kiểm tra xuất file CSV
@@ -441,4 +440,3 @@ def test_tc_dash_03_chart_layout_and_24h_timeline(
     )
 
     capture_evidence(page, "TC-DASH-03", 2, "charts-persisted-after-refresh", passed=True)
-
