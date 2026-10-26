@@ -1,0 +1,21 @@
+schema_version: "1.0"
+
+# Wazuh rule levels are explicitly mapped so analysts can tune severity
+# without changing application code.
+wazuh_level_to_severity:
+  0: low
+  1: low
+  2: low
+  3: low
+  4: low
+  5: medium
+  6: medium
+  7: medium
+  8: medium
+  9: high
+  10: high
+  11: high
+  12: high
+  13: critical
+  14: critical
+  15: critical

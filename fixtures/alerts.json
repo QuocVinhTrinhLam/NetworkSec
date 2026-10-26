@@ -1,0 +1,110 @@
+[
+  {
+    "fixture_id": "port-scan",
+    "@timestamp": "2026-10-26T12:00:01.000Z",
+    "agent": {"name": "edge-pfsense", "ip": "10.0.99.254"},
+    "decoder": {"name": "pfsense"},
+    "rule": {"id": "100201", "level": 10, "description": "Port scan detected", "groups": ["port_scan"]},
+    "data": {"srcip": "203.0.113.45", "srcport": "51514", "dstip": "10.0.10.20", "dstport": "22", "protocol": "tcp", "interface": "em0"},
+    "full_log": "Oct 26 12:00:01 edge-pfsense filterlog[1847]: 1000000103,,,1000000004,em0,match,block,in,4,0x0,,64,48723,0,none,6,tcp,60,203.0.113.45,10.0.10.20,51514,22,0,S,2654407311,,64240,,mss"
+  },
+  {
+    "fixture_id": "network-brute-force",
+    "@timestamp": "2026-10-26T12:01:07.000Z",
+    "agent": {"name": "core-router", "ip": "10.0.99.1"},
+    "decoder": {"name": "mikrotik"},
+    "rule": {"id": "100210", "level": 13, "description": "Repeated SSH authentication failures", "groups": ["authentication_failed", "brute_force"]},
+    "data": {"srcip": "198.51.100.23", "srcport": "51322", "dstip": "10.0.99.1", "dstport": "22", "protocol": "tcp", "srcuser": "admin"},
+    "full_log": "oct/26/2026 12:01:07 system,error,critical login failure for user admin from 198.51.100.23 via ssh"
+  },
+  {
+    "fixture_id": "admin-login-success",
+    "@timestamp": "2026-10-26T12:02:11.123Z",
+    "agent": {"name": "access-switch-01", "ip": "10.0.99.11"},
+    "decoder": {"name": "cisco-ios"},
+    "rule": {"id": "100220", "level": 7, "description": "Administrator login succeeded", "groups": ["admin_login_success", "authentication_success"]},
+    "data": {"srcip": "10.0.99.10", "dstip": "10.0.99.11", "dstport": "22", "protocol": "tcp", "dstuser": "netadmin"},
+    "full_log": "Oct 26 12:02:11.123: %SEC_LOGIN-5-LOGIN_SUCCESS: Login Success [user: netadmin] [Source: 10.0.99.10] [localport: 22] at 12:02:11 UTC Sun Oct 26 2026"
+  },
+  {
+    "fixture_id": "admin-login-failure",
+    "@timestamp": "2026-10-26T12:03:05.000Z",
+    "agent": {"name": "core-router", "ip": "10.0.99.1"},
+    "decoder": {"name": "mikrotik"},
+    "rule": {"id": "100221", "level": 10, "description": "Administrator login failed", "groups": ["admin_login_failed", "authentication_failed"]},
+    "data": {"srcip": "198.51.100.31", "dstip": "10.0.99.1", "dstport": "8291", "protocol": "tcp", "srcuser": "admin"},
+    "full_log": "oct/26/2026 12:03:05 system,error,warning login failure for user admin from 198.51.100.31 via winbox"
+  },
+  {
+    "fixture_id": "configuration-change",
+    "@timestamp": "2026-10-26T12:04:33.478Z",
+    "agent": {"name": "access-switch-01", "ip": "10.0.99.11"},
+    "decoder": {"name": "cisco-ios"},
+    "rule": {"id": "100230", "level": 12, "description": "Network device configuration changed", "groups": ["config_changed"]},
+    "data": {"srcip": "10.0.99.10", "dstip": "10.0.99.11", "srcuser": "netadmin"},
+    "full_log": "Oct 26 12:04:33.478: %SYS-5-CONFIG_I: Configured from console by netadmin on vty0 (10.0.99.10)"
+  },
+  {
+    "fixture_id": "interface-flapping",
+    "@timestamp": "2026-10-26T12:05:41.029Z",
+    "agent": {"name": "access-switch-01", "ip": "10.0.99.11"},
+    "decoder": {"name": "cisco-ios"},
+    "rule": {"id": "100240", "level": 8, "description": "Interface state flapping", "groups": ["interface_flap"]},
+    "data": {"interface": "GigabitEthernet0/2"},
+    "full_log": "Oct 26 12:05:41.029: %LINK-3-UPDOWN: Interface GigabitEthernet0/2, changed state to down"
+  },
+  {
+    "fixture_id": "arp-spoofing",
+    "@timestamp": "2026-10-26T12:06:09.000Z",
+    "agent": {"name": "edge-opnsense", "ip": "10.0.99.253"},
+    "decoder": {"name": "opnsense-arpwatch"},
+    "rule": {"id": "100251", "level": 13, "description": "ARP cache poisoning behavior detected", "groups": ["arp_spoofing", "arp_poisoning"]},
+    "data": {"srcip": "10.0.10.66", "dstip": "10.0.10.1", "interface": "igb1", "vlan": "10"},
+    "full_log": "Oct 26 12:06:09 edge-opnsense arpwatch[4321]: changed ethernet address 10.0.10.1 00:11:22:33:44:55 (66:77:88:99:aa:bb)"
+  },
+  {
+    "fixture_id": "mac-flooding-port-security",
+    "@timestamp": "2026-10-26T12:07:24.610Z",
+    "agent": {"name": "access-switch-01", "ip": "10.0.99.11"},
+    "decoder": {"name": "cisco-ios"},
+    "rule": {"id": "100250", "level": 13, "description": "Port security violation", "groups": ["port_security", "mac_flooding"]},
+    "data": {"srcip": "10.0.10.77", "interface": "GigabitEthernet0/4", "vlan": "10"},
+    "full_log": "Oct 26 12:07:24.610: %PORT_SECURITY-2-PSECURE_VIOLATION: Security violation occurred, caused by MAC address 0050.56aa.bbcc on port GigabitEthernet0/4."
+  },
+  {
+    "fixture_id": "vlan-hopping",
+    "@timestamp": "2026-10-26T12:08:37.412Z",
+    "agent": {"name": "ovs-access-01", "ip": "10.0.99.21"},
+    "decoder": {"name": "openvswitch"},
+    "rule": {"id": "100260", "level": 13, "description": "Possible VLAN hopping attempt", "groups": ["vlan_hopping", "double_tagging"]},
+    "data": {"srcip": "10.0.10.66", "interface": "access-7", "vlan": "20"},
+    "full_log": "2026-10-26T12:08:37.412Z|00421|ofproto_dpif_upcall(handler18)|WARN|br0: received packet on unknown VLAN 20 from port access-7 (double-tagged 802.1Q frame)"
+  },
+  {
+    "fixture_id": "syn-flood",
+    "@timestamp": "2026-10-26T12:09:14.000Z",
+    "agent": {"name": "edge-pfsense", "ip": "10.0.99.254"},
+    "decoder": {"name": "pfsense"},
+    "rule": {"id": "100270", "level": 15, "description": "SYN flood threshold exceeded", "groups": ["dos", "syn_flood"]},
+    "data": {"srcip": "203.0.113.99", "srcport": "42420", "dstip": "10.0.20.10", "dstport": "443", "protocol": "tcp", "interface": "em0"},
+    "full_log": "Oct 26 12:09:14 edge-pfsense filterlog[1847]: 1000000105,,,1000000004,em0,match,block,in,4,0x0,,49,49112,0,none,6,tcp,60,203.0.113.99,10.0.20.10,42420,443,0,S,39288331,,65535,,mss"
+  },
+  {
+    "fixture_id": "vpn-anomaly",
+    "@timestamp": "2026-10-26T12:10:42.000Z",
+    "agent": {"name": "edge-opnsense", "ip": "10.0.99.253"},
+    "decoder": {"name": "opnsense-openvpn"},
+    "rule": {"id": "100280", "level": 12, "description": "VPN login from unusual source", "groups": ["vpn_anomaly"]},
+    "data": {"srcip": "192.0.2.88", "srcport": "54022", "dstip": "10.0.99.253", "dstport": "1194", "protocol": "udp", "srcuser": "student"},
+    "full_log": "Oct 26 12:10:42 edge-opnsense openvpn[7714]: student/192.0.2.88:54022 MULTI_sva: pool returned IPv4=10.8.0.14, IPv6=(Not enabled)"
+  },
+  {
+    "fixture_id": "device-silent",
+    "@timestamp": "2026-10-26T12:11:55.020Z",
+    "agent": {"name": "access-switch-01", "ip": "10.0.99.11"},
+    "decoder": {"name": "cisco-ios"},
+    "rule": {"id": "SYSTEM_DEVICE_SILENT", "level": 12, "description": "Device telemetry silent", "groups": ["device_silent", "telemetry_health"]},
+    "data": {"dstip": "10.0.99.20"},
+    "full_log": "Oct 26 12:11:55.020: %SYS-5-RESTART: Telemetry session to collector 10.0.99.20 has been silent for 15 minutes"
+  }
+]

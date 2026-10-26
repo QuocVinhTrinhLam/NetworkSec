@@ -7,4 +7,7 @@ __pycache__
 .ruff_cache
 tests
 docs
+Design.md
+AGENTS.md
+.agents
 *.pyc

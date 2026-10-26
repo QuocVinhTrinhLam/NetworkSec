@@ -27,6 +27,7 @@ class Settings:
     app_name: str = field(default_factory=lambda: os.getenv("APP_NAME", "Network Security Monitor"))
     app_env: str = field(default_factory=lambda: os.getenv("APP_ENV", "development"))
     app_url: str = field(default_factory=lambda: os.getenv("APP_URL", "http://localhost:8000"))
+    bind_host: str = field(default_factory=lambda: os.getenv("BIND_HOST", "127.0.0.1"))
     database_path: Path = field(
         default_factory=lambda: Path(
             os.getenv("DATABASE_PATH", str(BASE_DIR / "data" / "monitor.db"))
@@ -34,7 +35,7 @@ class Settings:
     )
     severity_config: Path = field(
         default_factory=lambda: Path(
-            os.getenv("SEVERITY_CONFIG", str(BASE_DIR / "config" / "severity.yaml"))
+            os.getenv("SEVERITY_CONFIG", str(BASE_DIR / "config" / "severity_map.yaml"))
         )
     )
     rules_catalog: Path = field(
@@ -43,8 +44,22 @@ class Settings:
         )
     )
     mock_mode: bool = field(default_factory=lambda: _bool("MOCK_MODE", True))
+    alert_source: str = field(default_factory=lambda: os.getenv("ALERT_SOURCE", "mock").lower())
+    mock_fixture_path: Path = field(
+        default_factory=lambda: Path(
+            os.getenv("MOCK_FIXTURE_PATH", str(BASE_DIR / "fixtures" / "alerts.json"))
+        )
+    )
+    raw_log_max_length: int = field(
+        default_factory=lambda: int(os.getenv("RAW_LOG_MAX_LENGTH", "4096"))
+    )
     log_level: str = field(default_factory=lambda: os.getenv("LOG_LEVEL", "INFO"))
-    minimum_severity: str = field(default_factory=lambda: os.getenv("MINIMUM_SEVERITY", "medium"))
+    json_logs: bool = field(default_factory=lambda: _bool("JSON_LOGS", False))
+    minimum_severity: str = field(
+        default_factory=lambda: os.getenv(
+            "TELEGRAM_MIN_SEVERITY", os.getenv("MINIMUM_SEVERITY", "medium")
+        )
+    )
     poll_interval_seconds: int = field(
         default_factory=lambda: int(os.getenv("POLL_INTERVAL_SECONDS", "10"))
     )
@@ -55,12 +70,17 @@ class Settings:
         default_factory=lambda: int(os.getenv("DEDUP_WINDOW_SECONDS", "60"))
     )
     telegram_rate_limit: int = field(
-        default_factory=lambda: int(os.getenv("TELEGRAM_RATE_LIMIT", "20"))
+        default_factory=lambda: int(
+            os.getenv("MAX_MESSAGES_PER_MINUTE", os.getenv("TELEGRAM_RATE_LIMIT", "20"))
+        )
     )
     telegram_rate_window_seconds: int = field(
         default_factory=lambda: int(os.getenv("TELEGRAM_RATE_WINDOW_SECONDS", "60"))
     )
     telegram_bot_token: str = field(default_factory=lambda: os.getenv("TELEGRAM_BOT_TOKEN", ""))
+    telegram_timezone: str = field(
+        default_factory=lambda: os.getenv("TELEGRAM_TIMEZONE", "Asia/Ho_Chi_Minh")
+    )
     allowed_chat_ids: set[int] = field(
         default_factory=lambda: _int_set(os.getenv("ALLOWED_CHAT_IDS", ""))
     )

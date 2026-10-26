@@ -1,0 +1,407 @@
+{
+  "$defs": {
+    "AlertSource": {
+      "description": "Supported alert producers.",
+      "enum": [
+        "mock",
+        "wazuh"
+      ],
+      "title": "AlertSource",
+      "type": "string"
+    },
+    "AlertStatus": {
+      "description": "Analyst lifecycle state for an alert.",
+      "enum": [
+        "new",
+        "acknowledged",
+        "muted"
+      ],
+      "title": "AlertStatus",
+      "type": "string"
+    },
+    "Device": {
+      "additionalProperties": false,
+      "description": "Network asset that emitted the event.",
+      "properties": {
+        "name": {
+          "maxLength": 255,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "type": {
+          "$ref": "#/$defs/DeviceType"
+        },
+        "vendor": {
+          "anyOf": [
+            {
+              "maxLength": 255,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Vendor"
+        },
+        "ip": {
+          "anyOf": [
+            {
+              "format": "ipvanyaddress",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ip"
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "title": "Device",
+      "type": "object"
+    },
+    "DeviceType": {
+      "description": "Normalized device categories.",
+      "enum": [
+        "router",
+        "switch",
+        "firewall",
+        "server",
+        "other"
+      ],
+      "title": "DeviceType",
+      "type": "string"
+    },
+    "MitreTechnique": {
+      "additionalProperties": false,
+      "description": "MITRE ATT&CK technique associated with the detection.",
+      "properties": {
+        "id": {
+          "maxLength": 32,
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 255,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "tactic": {
+          "maxLength": 255,
+          "minLength": 1,
+          "title": "Tactic",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "tactic"
+      ],
+      "title": "MitreTechnique",
+      "type": "object"
+    },
+    "Network": {
+      "additionalProperties": false,
+      "description": "Optional network attributes parsed from the source event.",
+      "properties": {
+        "src_ip": {
+          "anyOf": [
+            {
+              "format": "ipvanyaddress",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Src Ip"
+        },
+        "src_port": {
+          "anyOf": [
+            {
+              "maximum": 65535,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Src Port"
+        },
+        "dst_ip": {
+          "anyOf": [
+            {
+              "format": "ipvanyaddress",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dst Ip"
+        },
+        "dst_port": {
+          "anyOf": [
+            {
+              "maximum": 65535,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dst Port"
+        },
+        "protocol": {
+          "anyOf": [
+            {
+              "maxLength": 32,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Protocol"
+        },
+        "interface": {
+          "anyOf": [
+            {
+              "maxLength": 255,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Interface"
+        },
+        "vlan": {
+          "anyOf": [
+            {
+              "maximum": 4094,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Vlan"
+        }
+      },
+      "title": "Network",
+      "type": "object"
+    },
+    "Rule": {
+      "additionalProperties": false,
+      "description": "Detection rule responsible for the alert.",
+      "properties": {
+        "id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "description": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "level": {
+          "minimum": 0,
+          "title": "Level",
+          "type": "integer"
+        },
+        "groups": {
+          "items": {
+            "maxLength": 255,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Groups",
+          "type": "array"
+        },
+        "catalog_id": {
+          "anyOf": [
+            {
+              "maxLength": 255,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Catalog Id"
+        }
+      },
+      "required": [
+        "id",
+        "description",
+        "level"
+      ],
+      "title": "Rule",
+      "type": "object"
+    },
+    "Severity": {
+      "description": "Normalized alert severity.",
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ],
+      "title": "Severity",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Canonical and fully validated Alert Schema v1 model.",
+  "properties": {
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "alert_id": {
+      "default": "",
+      "title": "Alert Id",
+      "type": "string"
+    },
+    "timestamp": {
+      "format": "date-time",
+      "title": "Timestamp",
+      "type": "string"
+    },
+    "received_at": {
+      "format": "date-time",
+      "title": "Received At",
+      "type": "string"
+    },
+    "source": {
+      "$ref": "#/$defs/AlertSource"
+    },
+    "device": {
+      "$ref": "#/$defs/Device"
+    },
+    "severity": {
+      "$ref": "#/$defs/Severity"
+    },
+    "rule": {
+      "$ref": "#/$defs/Rule"
+    },
+    "network": {
+      "$ref": "#/$defs/Network"
+    },
+    "user": {
+      "anyOf": [
+        {
+          "maxLength": 255,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "User"
+    },
+    "mitre": {
+      "items": {
+        "$ref": "#/$defs/MitreTechnique"
+      },
+      "title": "Mitre",
+      "type": "array"
+    },
+    "event_count": {
+      "default": 1,
+      "minimum": 1,
+      "title": "Event Count",
+      "type": "integer"
+    },
+    "status": {
+      "$ref": "#/$defs/AlertStatus",
+      "default": "new"
+    },
+    "acknowledged_by": {
+      "anyOf": [
+        {
+          "maxLength": 255,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Acknowledged By"
+    },
+    "acknowledged_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Acknowledged At"
+    },
+    "tags": {
+      "items": {
+        "maxLength": 255,
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Tags",
+      "type": "array"
+    },
+    "raw_log": {
+      "title": "Raw Log",
+      "type": "string"
+    },
+    "dedup_key": {
+      "default": "",
+      "title": "Dedup Key",
+      "type": "string"
+    }
+  },
+  "required": [
+    "timestamp",
+    "source",
+    "device",
+    "severity",
+    "rule",
+    "raw_log"
+  ],
+  "title": "Alert",
+  "type": "object"
+}

@@ -24,9 +24,11 @@ def test_normalizes_wazuh_alert_and_matches_catalog() -> None:
         "full_log": "blocked scan",
     }
 
-    alert = normalize_alert(document, mapper, catalog, "alert-1")
+    alert = normalize_alert(document, mapper, catalog, "source-document-id")
+    replayed = normalize_alert(document, mapper, catalog, "different-source-document-id")
 
-    assert alert.id == "alert-1"
+    assert alert.id == replayed.id
+    assert len(alert.id) == 64
     assert alert.device_type == "firewall"
     assert alert.source_ip == "203.0.113.5"
     assert alert.severity == "high"

@@ -11,6 +11,7 @@ from app.config import BASE_DIR, Settings
 from app.main import create_app
 from app.models import Alert
 from app.web.auth import hash_password
+from app.web.routes import csv_safe_row
 
 
 def build_client(tmp_path: Path) -> TestClient:
@@ -24,23 +25,23 @@ def build_client(tmp_path: Path) -> TestClient:
         mock_mode=True,
     )
     app = create_app(settings)
-    app.state.database.insert_alert(
-        Alert(
-            id="web-alert",
-            timestamp="2020-01-01T10:00:00+00:00",
-            device_name='=HYPERLINK("https://attacker.invalid")',
-            device_type="firewall",
-            source_ip="203.0.113.5",
-            dest_ip="10.0.0.1",
-            user=None,
-            rule_id="100201",
-            rule_description="Port scan <img src=x>",
-            severity="high",
-            mitre_id="T1046",
-            mitre_name="Discovery",
-            raw_log="<script>owned()</script>",
-        )
+    seeded_alert = Alert(
+        id="web-alert",
+        timestamp="2020-01-01T10:00:00+00:00",
+        device_name='=HYPERLINK("https://attacker.invalid")',
+        device_type="firewall",
+        source_ip="203.0.113.5",
+        dest_ip="10.0.0.1",
+        user=None,
+        rule_id="100201",
+        rule_description="Port scan <img src=x>",
+        severity="high",
+        mitre_id="T1046",
+        mitre_name="Discovery",
+        raw_log="<script>owned()</script>",
     )
+    app.state.database.insert_alert(seeded_alert)
+    app.state.test_alert_id = seeded_alert.alert_id
     return TestClient(app, follow_redirects=False)
 
 
@@ -54,6 +55,20 @@ def login(client: TestClient) -> None:
     assert response.status_code == 303
 
 
+def test_csv_formula_guard_handles_leading_whitespace_and_bom() -> None:
+    fields = ["space", "newline", "bom", "safe"]
+    row = csv_safe_row(
+        {"space": "  =1+1", "newline": "\n@SUM(A:A)", "bom": "\ufeff-2+2", "safe": "text"},
+        fields,
+    )
+    assert row == {
+        "space": "'  =1+1",
+        "newline": "'\n@SUM(A:A)",
+        "bom": "'\ufeff-2+2",
+        "safe": "text",
+    }
+
+
 def test_authentication_csrf_and_output_escaping(tmp_path: Path) -> None:
     with build_client(tmp_path) as client:
         assert client.get("/dashboard").status_code == 303
@@ -65,12 +80,13 @@ def test_authentication_csrf_and_output_escaping(tmp_path: Path) -> None:
             == 403
         )
         login(client)
-        detail = client.get("/alerts/web-alert")
+        detail = client.get(f"/alerts/{client.app.state.test_alert_id}")
         assert detail.status_code == 200
         assert "Back to alert queue" in detail.text
         assert '<dl class="detail-grid detail-facts">' in detail.text
         assert "<script>owned()" not in detail.text
         assert "&lt;script&gt;owned()&lt;/script&gt;" in detail.text
+        assert "Chặn hoặc giới hạn tốc độ IP nguồn" in detail.text
 
 
 def test_alert_filters_and_csv_export(tmp_path: Path) -> None:
@@ -78,19 +94,19 @@ def test_alert_filters_and_csv_export(tmp_path: Path) -> None:
         login(client)
         page = client.get("/alerts?time_range=all&severity=high&source_ip=203.0.113.5")
         assert page.status_code == 200
-        assert "web-alert" in page.text
+        assert client.app.state.test_alert_id in page.text
         search_page = client.get("/alerts?time_range=all&search=203.0.113.5")
-        assert "web-alert" in search_page.text
+        assert client.app.state.test_alert_id in search_page.text
         csv_response = client.get(
             "/alerts/export.csv?time_range=all&severity=high&source_ip=203.0.113.5"
         )
         assert csv_response.status_code == 200
-        assert "web-alert" in csv_response.text
+        assert client.app.state.test_alert_id in csv_response.text
         assert "'=HYPERLINK" in csv_response.text
         excluded = client.get(
             "/alerts/export.csv?time_range=all&severity=high&source_ip=198.51.100.10"
         )
-        assert "web-alert" not in excluded.text
+        assert client.app.state.test_alert_id not in excluded.text
 
 
 def test_device_becomes_silent(tmp_path: Path) -> None:
@@ -104,23 +120,22 @@ def test_device_becomes_silent(tmp_path: Path) -> None:
 
 def test_dashboard_renders_soc_command_center_and_live_queue(tmp_path: Path) -> None:
     with build_client(tmp_path) as client:
-        client.app.state.database.insert_alert(
-            Alert(
-                id="live-critical-alert",
-                timestamp=datetime.now(UTC).isoformat(timespec="seconds"),
-                device_name="edge-fw-01",
-                device_type="firewall",
-                source_ip="198.51.100.23",
-                dest_ip="10.0.0.10",
-                user="soc-analyst",
-                rule_id="100900",
-                rule_description='Suspicious </script><script>alert("owned")</script> access',
-                severity="critical",
-                mitre_id="T1078",
-                mitre_name="Valid Accounts",
-                raw_log="authentication anomaly",
-            )
+        critical_alert = Alert(
+            id="live-critical-alert",
+            timestamp=datetime.now(UTC).isoformat(timespec="seconds"),
+            device_name="edge-fw-01",
+            device_type="firewall",
+            source_ip="198.51.100.23",
+            dest_ip="10.0.0.10",
+            user="soc-analyst",
+            rule_id="100900",
+            rule_description='Suspicious </script><script>alert("owned")</script> access',
+            severity="critical",
+            mitre_id="T1078",
+            mitre_name="Valid Accounts",
+            raw_log="authentication anomaly",
         )
+        client.app.state.database.insert_alert(critical_alert)
         login(client)
 
         page = client.get("/dashboard")
@@ -131,7 +146,7 @@ def test_dashboard_renders_soc_command_center_and_live_queue(tmp_path: Path) -> 
         assert 'aria-current="page"' in page.text
         assert "Recent detections" in page.text
         assert "Demo mode" in page.text
-        assert "live-critical-alert" in page.text
+        assert critical_alert.alert_id in page.text
         assert "edge-fw-01" in page.text
         assert '</script><script>alert("owned")</script>' not in page.text
 
@@ -184,8 +199,7 @@ def test_soc_command_center_refresh_and_kpi_grid_layout(tmp_path: Path) -> None:
     with build_client(tmp_path) as client:
         # Khởi tạo bản ghi cảnh báo ban đầu trong khung thời gian 24h
         # để thiết lập baseline cho các thẻ KPI
-        client.app.state.database.insert_alert(
-            Alert(
+        refreshed_alert = Alert(
                 id="initial-soc-alert-01",
                 timestamp=datetime.now(UTC).isoformat(timespec="seconds"),
                 device_name="edge-fw-01",
@@ -200,7 +214,7 @@ def test_soc_command_center_refresh_and_kpi_grid_layout(tmp_path: Path) -> None:
                 mitre_name="Network Service Scanning",
                 raw_log="initial perimeter log",
             )
-        )
+        client.app.state.database.insert_alert(refreshed_alert)
 
         # Trích xuất CSRF token từ trang /login để mô phỏng chính xác luồng xác thực;
         # việc kiểm tra token ngăn chặn Timing Attack và bảo vệ phiên làm việc khỏi CSRF.
@@ -246,23 +260,22 @@ def test_soc_command_center_refresh_and_kpi_grid_layout(tmp_path: Path) -> None:
 
         # Mô phỏng nút .refresh-button bằng cách chèn sự cố mới và yêu cầu /partials/dashboard;
         # Sử dụng HTMX partial thay vì full reload nhằm tiết kiệm băng thông mạng truyền dẫn.
-        client.app.state.database.insert_alert(
-            Alert(
-                id="refreshed-soc-alert-02",
-                timestamp=datetime.now(UTC).isoformat(timespec="seconds"),
-                device_name="soc-core-gw-01",
-                device_type="firewall",
-                source_ip="198.51.100.99",
-                dest_ip="10.0.0.1",
-                user="soc-admin",
-                rule_id="100999",
-                rule_description="Critical lateral privilege escalation",
-                severity="critical",
-                mitre_id="T1078",
-                mitre_name="Valid Accounts",
-                raw_log="soc refresh test log",
-            )
+        refreshed_alert = Alert(
+            id="refreshed-soc-alert-02",
+            timestamp=datetime.now(UTC).isoformat(timespec="seconds"),
+            device_name="soc-core-gw-01",
+            device_type="firewall",
+            source_ip="198.51.100.99",
+            dest_ip="10.0.0.1",
+            user="soc-admin",
+            rule_id="100999",
+            rule_description="Critical lateral privilege escalation",
+            severity="critical",
+            mitre_id="T1078",
+            mitre_name="Valid Accounts",
+            raw_log="soc refresh test log",
         )
+        client.app.state.database.insert_alert(refreshed_alert)
 
         refresh_resp = client.get("/partials/dashboard")
 
@@ -271,7 +284,7 @@ def test_soc_command_center_refresh_and_kpi_grid_layout(tmp_path: Path) -> None:
         assert refresh_resp.status_code == 200
 
         content_html = refresh_resp.text
-        assert "refreshed-soc-alert-02" in content_html
+        assert refreshed_alert.alert_id in content_html
         assert "soc-core-gw-01" in content_html
         assert '<div class="metric-grid">' in content_html
         assert "metric-total" in content_html

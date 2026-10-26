@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from collections.abc import Iterator
@@ -11,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from app.models import Alert, AttackScenario, utc_now_iso
+from app.schemas.alert import AlertStatus, MitreTechnique
 
 SCHEMA = """
 PRAGMA journal_mode=WAL;
@@ -38,7 +40,22 @@ CREATE TABLE IF NOT EXISTS alerts (
     acknowledged_by TEXT,
     acknowledged_at TEXT,
     notification_processed INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    schema_version TEXT NOT NULL DEFAULT '1.0',
+    received_at TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL DEFAULT 'mock',
+    device_vendor TEXT,
+    device_ip TEXT,
+    src_port INTEGER,
+    dst_port INTEGER,
+    protocol TEXT,
+    interface TEXT,
+    vlan INTEGER,
+    mitre_json TEXT NOT NULL DEFAULT '[]',
+    event_count INTEGER NOT NULL DEFAULT 1,
+    status TEXT NOT NULL DEFAULT 'new',
+    tags_json TEXT NOT NULL DEFAULT '[]',
+    dedup_key TEXT NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_alerts_timestamp ON alerts(timestamp DESC);
@@ -80,6 +97,24 @@ CREATE TABLE IF NOT EXISTS attack_scenarios (
 );
 """
 
+MIGRATION_COLUMNS = {
+    "schema_version": "TEXT NOT NULL DEFAULT '1.0'",
+    "received_at": "TEXT NOT NULL DEFAULT ''",
+    "source": "TEXT NOT NULL DEFAULT 'mock'",
+    "device_vendor": "TEXT",
+    "device_ip": "TEXT",
+    "src_port": "INTEGER",
+    "dst_port": "INTEGER",
+    "protocol": "TEXT",
+    "interface": "TEXT",
+    "vlan": "INTEGER",
+    "mitre_json": "TEXT NOT NULL DEFAULT '[]'",
+    "event_count": "INTEGER NOT NULL DEFAULT 1",
+    "status": "TEXT NOT NULL DEFAULT 'new'",
+    "tags_json": "TEXT NOT NULL DEFAULT '[]'",
+    "dedup_key": "TEXT NOT NULL DEFAULT ''",
+}
+
 
 class Database:
     """Repository wrapper that opens short-lived, thread-safe connections."""
@@ -91,6 +126,169 @@ class Database:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as connection:
             connection.executescript(SCHEMA)
+            existing = {
+                str(row["name"]) for row in connection.execute("PRAGMA table_info(alerts)")
+            }
+            for name, declaration in MIGRATION_COLUMNS.items():
+                if name not in existing:
+                    connection.execute(f"ALTER TABLE alerts ADD COLUMN {name} {declaration}")
+            connection.execute(
+                """
+                UPDATE alerts SET
+                    received_at = CASE WHEN received_at = '' THEN created_at ELSE received_at END,
+                    source = CASE WHEN id LIKE 'mock-%' THEN 'mock' ELSE source END,
+                    status = CASE WHEN acknowledged = 1 THEN 'acknowledged' ELSE status END
+                """
+            )
+            legacy_rows = connection.execute(
+                """
+                SELECT id, rule_id, device_name, source_ip, mitre_id, mitre_name
+                FROM alerts WHERE dedup_key = '' OR (mitre_json = '[]' AND mitre_id IS NOT NULL)
+                """
+            ).fetchall()
+            for row in legacy_rows:
+                dedup_key = hashlib.sha256(
+                    "\x1f".join(
+                        (row["rule_id"], row["device_name"], row["source_ip"] or "")
+                    ).encode("utf-8")
+                ).hexdigest()
+                mitre_json = "[]"
+                if row["mitre_id"]:
+                    mitre_json = json.dumps(
+                        [
+                            {
+                                "id": row["mitre_id"],
+                                "name": row["mitre_name"] or "Unknown",
+                                "tactic": "Unknown",
+                            }
+                        ],
+                        ensure_ascii=False,
+                    )
+                connection.execute(
+                    "UPDATE alerts SET dedup_key = ?, mitre_json = ? WHERE id = ?",
+                    (dedup_key, mitre_json, row["id"]),
+                )
+
+    @staticmethod
+    def _record(alert: Alert) -> dict[str, Any]:
+        first_mitre = alert.mitre[0] if alert.mitre else None
+        return {
+            "id": alert.alert_id,
+            "timestamp": alert.timestamp.isoformat(),
+            "device_name": alert.device.name,
+            "device_type": alert.device.type.value,
+            "source_ip": str(alert.network.src_ip) if alert.network.src_ip else None,
+            "dest_ip": str(alert.network.dst_ip) if alert.network.dst_ip else None,
+            "username": alert.user,
+            "rule_id": alert.rule.id,
+            "rule_description": alert.rule.description,
+            "severity": alert.severity.value,
+            "mitre_id": first_mitre.id if first_mitre else None,
+            "mitre_name": first_mitre.name if first_mitre else None,
+            "raw_log": alert.raw_log,
+            "use_case_id": alert.rule.catalog_id,
+            "recommended_response": None,
+            "wazuh_level": alert.rule.level,
+            "groups_csv": ",".join(alert.rule.groups),
+            "acknowledged": int(alert.status is AlertStatus.ACKNOWLEDGED),
+            "acknowledged_by": alert.acknowledged_by,
+            "acknowledged_at": (
+                alert.acknowledged_at.isoformat() if alert.acknowledged_at else None
+            ),
+            "created_at": alert.received_at.isoformat(),
+            "schema_version": alert.schema_version,
+            "received_at": alert.received_at.isoformat(),
+            "source": alert.source.value,
+            "device_vendor": alert.device.vendor,
+            "device_ip": str(alert.device.ip) if alert.device.ip else None,
+            "src_port": alert.network.src_port,
+            "dst_port": alert.network.dst_port,
+            "protocol": alert.network.protocol,
+            "interface": alert.network.interface,
+            "vlan": alert.network.vlan,
+            "mitre_json": json.dumps(
+                [item.model_dump(mode="json") for item in alert.mitre], ensure_ascii=False
+            ),
+            "event_count": alert.event_count,
+            "status": alert.status.value,
+            "tags_json": json.dumps(alert.tags, ensure_ascii=False),
+            "dedup_key": alert.dedup_key,
+        }
+
+    @staticmethod
+    def _model(row: sqlite3.Row | dict[str, Any]) -> Alert:
+        item = dict(row)
+        return Alert.model_validate(
+            {
+                "schema_version": item.get("schema_version") or "1.0",
+                "alert_id": item["id"],
+                "timestamp": item["timestamp"],
+                "received_at": item.get("received_at") or item["created_at"],
+                "source": item.get("source") or "mock",
+                "device": {
+                    "name": item["device_name"],
+                    "type": item["device_type"],
+                    "vendor": item.get("device_vendor"),
+                    "ip": item.get("device_ip"),
+                },
+                "severity": item["severity"],
+                "rule": {
+                    "id": item["rule_id"],
+                    "description": item["rule_description"],
+                    "level": int(item.get("wazuh_level") or 0),
+                    "groups": [
+                        value for value in str(item.get("groups_csv") or "").split(",") if value
+                    ],
+                    "catalog_id": item.get("use_case_id"),
+                },
+                "network": {
+                    "src_ip": item.get("source_ip"),
+                    "src_port": item.get("src_port"),
+                    "dst_ip": item.get("dest_ip"),
+                    "dst_port": item.get("dst_port"),
+                    "protocol": item.get("protocol"),
+                    "interface": item.get("interface"),
+                    "vlan": item.get("vlan"),
+                },
+                "user": item.get("username"),
+                "mitre": json.loads(item.get("mitre_json") or "[]"),
+                "event_count": int(item.get("event_count") or 1),
+                "status": item.get("status") or "new",
+                "acknowledged_by": item.get("acknowledged_by"),
+                "acknowledged_at": item.get("acknowledged_at"),
+                "tags": json.loads(item.get("tags_json") or "[]"),
+                "raw_log": item["raw_log"],
+                "dedup_key": item.get("dedup_key") or "",
+            }
+        )
+
+    @classmethod
+    def _compat(cls, row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
+        item = dict(row)
+        alert = cls._model(item)
+        first_mitre: MitreTechnique | None = alert.mitre[0] if alert.mitre else None
+        item.update(
+            {
+                "id": item["id"],
+                "timestamp": alert.timestamp.isoformat(),
+                "device_name": alert.device.name,
+                "device_type": alert.device.type.value,
+                "source_ip": str(alert.network.src_ip) if alert.network.src_ip else None,
+                "dest_ip": str(alert.network.dst_ip) if alert.network.dst_ip else None,
+                "user": alert.user,
+                "rule_id": alert.rule.id,
+                "rule_description": alert.rule.description,
+                "severity": alert.severity.value,
+                "mitre_id": first_mitre.id if first_mitre else None,
+                "mitre_name": first_mitre.name if first_mitre else None,
+                "use_case_id": alert.rule.catalog_id,
+                "wazuh_level": alert.rule.level,
+                "groups": list(alert.rule.groups),
+                "count": alert.event_count,
+                "acknowledged": alert.status is AlertStatus.ACKNOWLEDGED,
+            }
+        )
+        return item
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
@@ -103,7 +301,7 @@ class Database:
             connection.close()
 
     def insert_alert(self, alert: Alert) -> bool:
-        record = alert.as_record()
+        record = self._record(alert)
         with self.connect() as connection:
             cursor = connection.execute(
                 """
@@ -111,17 +309,36 @@ class Database:
                     id, timestamp, device_name, device_type, source_ip, dest_ip,
                     username, rule_id, rule_description, severity, mitre_id,
                     mitre_name, raw_log, use_case_id, recommended_response,
-                    wazuh_level, groups_csv, created_at
+                    wazuh_level, groups_csv, acknowledged, acknowledged_by,
+                    acknowledged_at, created_at, schema_version, received_at,
+                    source, device_vendor, device_ip, src_port, dst_port,
+                    protocol, interface, vlan, mitre_json, event_count,
+                    status, tags_json, dedup_key
                 ) VALUES (
                     :id, :timestamp, :device_name, :device_type, :source_ip, :dest_ip,
-                    :user, :rule_id, :rule_description, :severity, :mitre_id,
+                    :username, :rule_id, :rule_description, :severity, :mitre_id,
                     :mitre_name, :raw_log, :use_case_id, :recommended_response,
-                    :wazuh_level, :groups, :created_at
+                    :wazuh_level, :groups_csv, :acknowledged, :acknowledged_by,
+                    :acknowledged_at, :created_at, :schema_version, :received_at,
+                    :source, :device_vendor, :device_ip, :src_port, :dst_port,
+                    :protocol, :interface, :vlan, :mitre_json, :event_count,
+                    :status, :tags_json, :dedup_key
                 )
                 """,
-                {**record, "created_at": utc_now_iso()},
+                record,
             )
-            return cursor.rowcount == 1
+            inserted = cursor.rowcount == 1
+            if inserted:
+                connection.execute(
+                    """
+                    INSERT INTO app_state(key, value, updated_at) VALUES (?, ?, ?)
+                    ON CONFLICT(key) DO UPDATE SET
+                        value = excluded.value,
+                        updated_at = excluded.updated_at
+                    """,
+                    ("last_alert_time", alert.timestamp.isoformat(), utc_now_iso()),
+                )
+            return inserted
 
     def pending_notifications(self, limit: int = 100) -> list[dict[str, Any]]:
         with self.connect() as connection:
@@ -133,7 +350,7 @@ class Database:
                 """,
                 (limit,),
             ).fetchall()
-        return [dict(row) for row in rows]
+        return [self._compat(row) for row in rows]
 
     def mark_notification_processed(self, alert_id: str) -> None:
         with self.connect() as connection:
@@ -189,11 +406,19 @@ class Database:
                 (json.dumps(message_ids, separators=(",", ":")), fingerprint),
             )
 
+    def delete_notification_group(self, fingerprint: str) -> None:
+        """Discard an unsent aggregation group after rate-limit suppression."""
+        with self.connect() as connection:
+            connection.execute(
+                "DELETE FROM notification_groups WHERE fingerprint = ?", (fingerprint,)
+            )
+
     def acknowledge(self, alert_id: str, actor: str) -> bool:
         with self.connect() as connection:
             cursor = connection.execute(
                 """
-                UPDATE alerts SET acknowledged = 1, acknowledged_by = ?, acknowledged_at = ?
+                UPDATE alerts SET acknowledged = 1, status = 'acknowledged',
+                    acknowledged_by = ?, acknowledged_at = ?
                 WHERE id = ?
                 """,
                 (actor[:255], utc_now_iso(), alert_id),
@@ -203,14 +428,24 @@ class Database:
     def get_alert(self, alert_id: str) -> dict[str, Any] | None:
         with self.connect() as connection:
             row = connection.execute("SELECT * FROM alerts WHERE id = ?", (alert_id,)).fetchone()
-        return dict(row) if row else None
+        return self._compat(row) if row else None
+
+    def resolve_alert_id(self, prefix: str) -> str | None:
+        """Resolve one unique hexadecimal alert ID prefix for compact callbacks."""
+        if not prefix or len(prefix) > 64 or any(char not in "0123456789abcdef" for char in prefix):
+            return None
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT id FROM alerts WHERE id LIKE ? LIMIT 2", (f"{prefix}%",)
+            ).fetchall()
+        return str(rows[0]["id"]) if len(rows) == 1 else None
 
     def list_alerts(self, limit: int = 10) -> list[dict[str, Any]]:
         with self.connect() as connection:
             rows = connection.execute(
                 "SELECT * FROM alerts ORDER BY timestamp DESC LIMIT ?", (max(1, min(limit, 100)),)
             ).fetchall()
-        return [dict(row) for row in rows]
+        return [self._compat(row) for row in rows]
 
     def search_alerts(
         self,
@@ -270,7 +505,7 @@ class Database:
                 """,
                 [*parameters, safe_page_size, offset],
             ).fetchall()
-        return [dict(row) for row in rows], int(total)
+        return [self._compat(row) for row in rows], int(total)
 
     def top_sources(self, hours: int = 24, limit: int = 10) -> list[dict[str, Any]]:
         with self.connect() as connection:
@@ -418,6 +653,23 @@ class Database:
             devices.append(item)
         return devices
 
+    def silent_devices(self, silent_minutes: int) -> list[dict[str, Any]]:
+        """Return devices whose last real telemetry predates the silent threshold."""
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT device_name, device_type, device_vendor, device_ip,
+                       MAX(timestamp) AS last_seen
+                FROM alerts
+                WHERE rule_id != 'SYSTEM_DEVICE_SILENT'
+                GROUP BY device_name, device_type, device_vendor, device_ip
+                HAVING datetime(MAX(timestamp)) < datetime('now', ?)
+                ORDER BY last_seen ASC
+                """,
+                (f"-{max(1, silent_minutes)} minutes",),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def list_scenarios(self) -> list[dict[str, Any]]:
         with self.connect() as connection:
             rows = connection.execute(
@@ -438,6 +690,11 @@ class Database:
                 """,
                 (rule_id[:64], muted_until, actor[:255]),
             )
+
+    def unmute_rule(self, rule_id: str) -> bool:
+        with self.connect() as connection:
+            cursor = connection.execute("DELETE FROM mutes WHERE rule_id = ?", (rule_id[:64],))
+            return cursor.rowcount == 1
 
     def is_rule_muted(self, rule_id: str, now: datetime | None = None) -> bool:
         check_time = (now or datetime.now(UTC)).isoformat(timespec="seconds")
@@ -484,7 +741,9 @@ class Database:
                     scenario.tested_at,
                 ),
             )
-            return int(cursor.lastrowid)
+            if cursor.lastrowid is None:
+                raise RuntimeError("SQLite did not return a scenario row ID")
+            return cursor.lastrowid
 
     @staticmethod
     def parse_message_ids(raw: str) -> dict[str, int]:

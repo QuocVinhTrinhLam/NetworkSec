@@ -69,4 +69,6 @@ async def test_wazuh_poll_tracks_timestamp_and_id_cursor(tmp_path: Path) -> None
         "2026-10-25T10:00:00.000Z",
         "wazuh-1",
     ]
-    assert database.get_alert("wazuh-1")["use_case_id"] == "port-scan"
+    stored = database.list_alerts(limit=1)
+    assert len(stored) == 1
+    assert stored[0]["use_case_id"] == "port-scan"

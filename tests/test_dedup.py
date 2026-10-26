@@ -11,6 +11,7 @@ def _alert(alert_id: str = "a-1") -> dict[str, str]:
         "rule_id": "100210",
         "source_ip": "203.0.113.5",
         "device_name": "core-router",
+        "timestamp": "2026-10-25T10:00:00+00:00",
     }
 
 
@@ -40,3 +41,14 @@ def test_rate_limiter_returns_suppressed_count_when_window_reopens() -> None:
     reopened = limiter.consume(11)
     assert reopened.allowed
     assert reopened.suppressed_summary == 2
+
+
+def test_dedup_uses_event_time_for_backlog_alerts(tmp_path: Path) -> None:
+    database = Database(tmp_path / "event-time.db")
+    database.initialize()
+    dedup = Deduplicator(database, window_seconds=60)
+    first = _alert("a-1")
+    later = {**_alert("a-2"), "timestamp": "2026-10-25T10:02:00+00:00"}
+
+    assert dedup.register(first).action == "new"
+    assert dedup.register(later).action == "new"

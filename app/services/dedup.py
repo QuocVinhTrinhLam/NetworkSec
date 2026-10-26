@@ -38,7 +38,7 @@ class Deduplicator:
         return hashlib.sha256(identity.encode("utf-8")).hexdigest()
 
     def register(self, alert: dict[str, Any], now: datetime | None = None) -> DedupDecision:
-        observed_at = now or datetime.now(UTC)
+        observed_at = now or self._event_time(alert)
         fingerprint = self.fingerprint(alert)
         existing = self.database.get_notification_group(fingerprint)
         if existing and str(existing["alert_id"]) == str(alert["id"]):
@@ -54,7 +54,7 @@ class Deduplicator:
         else:
             elapsed = self.window_seconds + 1
 
-        if not existing or elapsed > self.window_seconds:
+        if not existing or elapsed < 0 or elapsed > self.window_seconds:
             count = 1
             message_ids: dict[str, int] = {}
             action = "new"
@@ -74,6 +74,18 @@ class Deduplicator:
             message_ids=message_ids,
         )
         return DedupDecision(action, fingerprint, count, message_ids)
+
+    @staticmethod
+    def _event_time(alert: dict[str, Any]) -> datetime:
+        value = alert.get("timestamp")
+        if isinstance(value, str):
+            try:
+                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                if parsed.tzinfo is not None and parsed.utcoffset() is not None:
+                    return parsed.astimezone(UTC)
+            except ValueError:
+                pass
+        return datetime.now(UTC)
 
 
 @dataclass(frozen=True, slots=True)

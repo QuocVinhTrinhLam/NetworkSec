@@ -1,0 +1,4 @@
+Oct 26 12:00:01 edge-pfsense filterlog[1847]: 1000000103,,,1000000004,em0,match,block,in,4,0x0,,64,48723,0,none,6,tcp,60,203.0.113.45,10.0.10.20,51514,22,0,S,2654407311,,64240,,mss
+Oct 26 12:06:09 edge-opnsense arpwatch[4321]: changed ethernet address 10.0.10.1 00:11:22:33:44:55 (66:77:88:99:aa:bb)
+Oct 26 12:09:14 edge-pfsense filterlog[1847]: 1000000105,,,1000000004,em0,match,block,in,4,0x0,,49,49112,0,none,6,tcp,60,203.0.113.99,10.0.20.10,42420,443,0,S,39288331,,65535,,mss
+Oct 26 12:10:42 edge-opnsense openvpn[7714]: student/192.0.2.88:54022 MULTI_sva: pool returned IPv4=10.8.0.14, IPv6=(Not enabled)

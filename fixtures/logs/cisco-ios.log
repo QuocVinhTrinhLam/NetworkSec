@@ -1,0 +1,5 @@
+Oct 26 12:02:11.123: %SEC_LOGIN-5-LOGIN_SUCCESS: Login Success [user: netadmin] [Source: 10.0.99.10] [localport: 22] at 12:02:11 UTC Sun Oct 26 2026
+Oct 26 12:04:33.478: %SYS-5-CONFIG_I: Configured from console by netadmin on vty0 (10.0.99.10)
+Oct 26 12:05:41.029: %LINK-3-UPDOWN: Interface GigabitEthernet0/2, changed state to down
+Oct 26 12:07:24.610: %PORT_SECURITY-2-PSECURE_VIOLATION: Security violation occurred, caused by MAC address 0050.56aa.bbcc on port GigabitEthernet0/4.
+Oct 26 12:11:55.020: %SYS-5-RESTART: Telemetry session to collector 10.0.99.20 has been silent for 15 minutes

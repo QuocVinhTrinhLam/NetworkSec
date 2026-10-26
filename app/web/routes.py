@@ -14,6 +14,7 @@ from fastapi.templating import Jinja2Templates
 from app.config import Settings
 from app.db import Database
 from app.models import AttackScenario
+from app.services.catalog import RulesCatalog
 from app.web.auth import csrf_token, require_user, validate_csrf, verify_password
 
 
@@ -22,14 +23,17 @@ def csv_safe_row(row: dict[str, Any], fields: list[str]) -> dict[str, Any]:
     safe: dict[str, Any] = {}
     for field in fields:
         value = row.get(field, "")
-        if isinstance(value, str) and value.startswith(("=", "+", "-", "@", "\t", "\r")):
-            value = "'" + value
+        if isinstance(value, str):
+            visible = value.lstrip(" \t\r\n\v\f\ufeff\u200b")
+            if visible.startswith(("=", "+", "-", "@")):
+                value = "'" + value
         safe[field] = value
     return safe
 
 
 def create_router(database: Database, settings: Settings, templates: Jinja2Templates) -> APIRouter:
     router = APIRouter()
+    catalog = RulesCatalog.from_file(settings.rules_catalog)
 
     def context(request: Request, **values: Any) -> dict[str, Any]:
         wazuh_health = database.get_state("wazuh_health")
@@ -243,6 +247,15 @@ def create_router(database: Database, settings: Settings, templates: Jinja2Templ
         alert = database.get_alert(alert_id)
         if not alert:
             raise HTTPException(status_code=404, detail="Alert not found")
+        catalog_entry = catalog.get(str(alert.get("use_case_id") or "")) or catalog.match(
+            str(alert.get("rule_id") or ""),
+            [str(group) for group in alert.get("groups", [])],
+        )
+        if catalog_entry:
+            alert = {
+                **alert,
+                "recommended_response": catalog_entry.recommended_response_for("vi"),
+            }
         return templates.TemplateResponse(
             request, "alert_detail.html", context(request, alert=alert)
         )

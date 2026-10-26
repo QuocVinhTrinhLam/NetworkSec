@@ -4,16 +4,20 @@ from __future__ import annotations
 
 import json
 import re
-import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
-from app.models import Alert
+from app.schemas.alert import Alert, AlertSource, Device, MitreTechnique, Network, Rule
 from app.services.catalog import RulesCatalog, SeverityMapper
 
 _IP_FIELDS = {
     "source": ("data.srcip", "data.src_ip", "source.ip", "srcip"),
     "dest": ("data.dstip", "data.dst_ip", "destination.ip", "dstip"),
+}
+
+_PORT_FIELDS = {
+    "source": ("data.srcport", "data.src_port", "source.port", "srcport"),
+    "dest": ("data.dstport", "data.dst_port", "destination.port", "dstport"),
 }
 
 
@@ -40,6 +44,15 @@ def _as_list(value: Any) -> list[str]:
     if isinstance(value, list):
         return [str(item) for item in value]
     return [str(value)]
+
+
+def _optional_int(value: Any) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _timestamp(value: Any) -> str:
@@ -71,21 +84,46 @@ def infer_device_type(document: dict[str, Any], device_name: str, groups: list[s
     return "other"
 
 
+def infer_vendor(document: dict[str, Any], device_name: str) -> str | None:
+    haystack = " ".join(
+        (
+            device_name,
+            str(_nested(document, "decoder.name", "")),
+            str(document.get("location", "")),
+        )
+    ).lower()
+    if "pfsense" in haystack:
+        return "Netgate/pfSense"
+    if "opnsense" in haystack:
+        return "OPNsense"
+    if re.search(r"mikrotik|routeros|winbox", haystack):
+        return "MikroTik"
+    if re.search(r"cisco|ios|iol", haystack):
+        return "Cisco"
+    if re.search(r"openvswitch|ovs", haystack):
+        return "Open vSwitch"
+    return None
+
+
 def normalize_alert(
     document: dict[str, Any],
     severity_mapper: SeverityMapper,
     rules_catalog: RulesCatalog,
     external_id: str | None = None,
+    *,
+    source: AlertSource | str = AlertSource.WAZUH,
+    raw_log_max_length: int = 4096,
 ) -> Alert:
     """Convert one Wazuh/OpenSearch document into an internal Alert.
 
     Raw fields remain plain data. Templates and Telegram formatters escape them at
     the output boundary because log content can be controlled by an attacker.
     """
-    rule = document.get("rule") if isinstance(document.get("rule"), dict) else {}
+    rule_value = document.get("rule")
+    rule = cast(dict[str, Any], rule_value) if isinstance(rule_value, dict) else {}
     groups = _as_list(rule.get("groups"))
     rule_id = str(rule.get("id", "unknown"))
-    level = int(rule.get("level", 0) or 0)
+    level = _optional_int(rule.get("level")) or 0
     catalog_entry = rules_catalog.match(rule_id, groups)
     severity = severity_mapper.map(level)
     if catalog_entry and catalog_entry.severity in {"low", "medium", "high", "critical"}:
@@ -98,28 +136,64 @@ def normalize_alert(
             "unknown-device",
         )
     )[:255]
-    mitre = rule.get("mitre") if isinstance(rule.get("mitre"), dict) else {}
-    mitre_ids = _as_list(mitre.get("id"))
-    mitre_names = _as_list(mitre.get("technique"))
+    mitre_value = rule.get("mitre")
+    mitre_data = cast(dict[str, Any], mitre_value) if isinstance(mitre_value, dict) else {}
+    mitre_ids = _as_list(mitre_data.get("id"))
+    mitre_names = _as_list(mitre_data.get("technique"))
+    if catalog_entry:
+        techniques = [
+            MitreTechnique(id=item.id, name=item.name, tactic=item.tactic)
+            for item in catalog_entry.mitre
+        ]
+    else:
+        techniques = [
+            MitreTechnique(
+                id=technique_id[:32],
+                name=(mitre_names[index] if index < len(mitre_names) else "Unknown")[:255],
+                tactic="Unknown",
+            )
+            for index, technique_id in enumerate(mitre_ids)
+            if technique_id
+        ]
     raw_value = document.get("full_log", document.get("message", document))
     raw_log = raw_value if isinstance(raw_value, str) else json.dumps(raw_value, ensure_ascii=False)
 
-    return Alert(
-        id=str(external_id or document.get("_id") or uuid.uuid4()),
-        timestamp=_timestamp(document.get("@timestamp", document.get("timestamp"))),
-        device_name=device_name,
-        device_type=infer_device_type(document, device_name, groups),
-        source_ip=_first(document, _IP_FIELDS["source"]),
-        dest_ip=_first(document, _IP_FIELDS["dest"]),
-        user=_first(document, ("data.srcuser", "data.dstuser", "user.name", "data.user")),
-        rule_id=rule_id[:64],
-        rule_description=str(rule.get("description", "Unclassified event"))[:500],
-        severity=severity,
-        mitre_id=mitre_ids[0] if mitre_ids else None,
-        mitre_name=mitre_names[0] if mitre_names else None,
-        raw_log=raw_log[:65535],
-        use_case_id=catalog_entry.id if catalog_entry else None,
-        recommended_response=catalog_entry.recommended_response if catalog_entry else None,
-        wazuh_level=level,
-        groups=groups,
+    _ = external_id  # Source IDs are intentionally ignored; Alert derives its stable identity.
+    user_value = _first(document, ("data.srcuser", "data.dstuser", "user.name", "data.user"))
+    return Alert.model_validate(
+        {
+            "timestamp": _timestamp(document.get("@timestamp", document.get("timestamp"))),
+            "source": source,
+            "device": Device(
+                name=device_name,
+                type=infer_device_type(document, device_name, groups),
+                vendor=infer_vendor(document, device_name),
+                ip=_first(document, ("agent.ip", "data.device_ip")),
+            ),
+            "severity": severity,
+            "rule": Rule(
+                id=rule_id[:128],
+                description=str(rule.get("description") or "Unclassified event")[:1000],
+                level=level,
+                groups=[value[:255] for value in groups if value],
+                catalog_id=catalog_entry.id if catalog_entry else None,
+            ),
+            "network": Network(
+                src_ip=_first(document, _IP_FIELDS["source"]),
+                src_port=_optional_int(_first(document, _PORT_FIELDS["source"])),
+                dst_ip=_first(document, _IP_FIELDS["dest"]),
+                dst_port=_optional_int(_first(document, _PORT_FIELDS["dest"])),
+                protocol=_first(document, ("data.protocol", "network.transport")),
+                interface=_first(
+                    document,
+                    ("data.interface", "data.ifname", "observer.ingress.interface.name"),
+                ),
+                vlan=_optional_int(_first(document, ("data.vlan", "network.vlan.id"))),
+            ),
+            "user": str(user_value)[:255] if user_value not in (None, "") else None,
+            "mitre": techniques,
+            "tags": [value[:255] for value in groups if value],
+            "raw_log": raw_log,
+        },
+        context={"raw_log_max_length": raw_log_max_length},
     )

@@ -1,45 +1,16 @@
-"""Internal data models shared by ingestion, storage, dashboard and bot."""
+"""Non-alert application models and compatibility exports."""
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+
+from app.schemas.alert import Alert as Alert
 
 
 def utc_now_iso() -> str:
     """Return a sortable UTC timestamp with second precision."""
     return datetime.now(UTC).isoformat(timespec="seconds")
-
-
-@dataclass(slots=True)
-class Alert:
-    """Normalized, safe-to-store representation of a Wazuh alert."""
-
-    id: str
-    timestamp: str
-    device_name: str
-    device_type: str
-    source_ip: str | None
-    dest_ip: str | None
-    user: str | None
-    rule_id: str
-    rule_description: str
-    severity: str
-    mitre_id: str | None
-    mitre_name: str | None
-    raw_log: str
-    use_case_id: str | None = None
-    recommended_response: str | None = None
-    wazuh_level: int = 0
-    groups: list[str] = field(default_factory=list)
-    count: int = 1
-
-    def as_record(self) -> dict[str, Any]:
-        """Convert the dataclass to a SQLite-ready mapping."""
-        record = asdict(self)
-        record["groups"] = ",".join(self.groups)
-        return record
 
 
 @dataclass(slots=True)

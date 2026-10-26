@@ -1,123 +1,201 @@
-# Network Security Monitor
+# NetworkSec Mini-SIEM
 
-Dashboard cảnh báo nhẹ và Telegram bot dành cho đồ án giám sát router, switch và firewall. Ứng dụng nhận alert đã được Wazuh phân tích, chuẩn hóa về một schema chung, lưu trạng thái trong SQLite và chạy trong một tiến trình FastAPI. Mức sử dụng bộ nhớ của container được giới hạn ở 300 MB.
+Mini-SIEM cho đồ án mạng doanh nghiệp mô phỏng: chuẩn hóa alert từ router, switch và
+firewall; lưu SQLite; phân tích trên dashboard SOC; gửi cảnh báo Telegram có dedup,
+rate limit, acknowledge và mute. Phase 1 chạy hoàn chỉnh bằng mock data thực tế;
+`WazuhAdapter` được cố ý giữ là stub cho Phase 2.
 
 ## Kiến trúc
 
 ```mermaid
 flowchart LR
-    A[Router / Switch / Firewall] -->|Syslog| R[rsyslog]
-    R --> W[Wazuh Manager]
-    W --> I[Wazuh Indexer]
-    I -->|OpenSearch REST, 10s| P[Wazuh poller]
-    P --> N[Normalize + SQLite outbox]
-    N --> D[Dedup + rate limit]
-    D --> T[Telegram Bot API]
-    N --> F[FastAPI + Jinja + HTMX]
-    F --> B[Analyst browser]
+    DEV[pfSense / MikroTik / Cisco / OVS] -->|Phase 1 fixtures| MOCK[MockAdapter]
+    DEV -. Syslog .-> WAZUH[Wazuh VM]
+    WAZUH -. Phase 2 OpenSearch .-> WA[WazuhAdapter stub]
+    MOCK --> SCHEMA[Alert Schema v1]
+    WA --> SCHEMA
+    SCHEMA --> DB[(SQLite shared volume)]
+    DB --> WEB[FastAPI + Jinja + HTMX dashboard]
+    DB --> BOT[aiogram 3 bot worker]
+    BOT --> TG[Telegram analysts]
 ```
 
-Wazuh chịu trách nhiệm decoder và detection rule. Repository này chỉ đọc alert đã sinh; decoder/rule riêng cho pfSense, MikroTik và Cisco có thể bổ sung sau mà không thay đổi dashboard.
+Ba container dùng cùng image multi-stage và chạy non-root: `dashboard`, `bot`, và
+`mock` (profile on-demand). Tổng memory limit là 256 MB.
 
-## Chạy nhanh bằng mock mode
+## Screenshots
 
-Yêu cầu: Python 3.11+ hoặc Docker Desktop.
+> Placeholder: thêm ảnh **SOC Command Center**, **Alert detail** và **Telegram alert**
+> vào `docs/screenshots/` trước buổi bảo vệ.
+
+## Quick start
+
+Yêu cầu: Docker Desktop/Engine có Compose v2 và một Telegram bot.
 
 ```bash
-cp .env.example .env
-docker compose up -d --build
-docker compose exec monitor python -m app.mock_generator --count 18 --interval 0.2 --duplicate-every 4
+git clone https://github.com/QuocVinhTrinhLam/NetworkSec.git
+cd NetworkSec && cp .env.example .env
+# Điền TELEGRAM_BOT_TOKEN, ALLOWED_CHAT_IDS và đổi SESSION_SECRET trong .env
+docker compose up -d --build dashboard bot
+make scenario NAME=ssh_bruteforce
 ```
 
-Mở `http://localhost:8000`, đăng nhập bằng `admin` / `change-me-now`. Đổi mật khẩu và `SESSION_SECRET` trước khi chia sẻ hoặc triển khai.
+Mở `http://127.0.0.1:8000`. Tài khoản demo local là `admin` / `change-me-now`;
+hãy tạo hash mới bằng `python -m app.password_hash` trước khi chia sẻ hệ thống.
 
-Chạy trực tiếp khi phát triển:
+## Tạo Telegram bot
+
+1. Nhắn `@BotFather`, chạy `/newbot`, đặt tên và username.
+2. Chép token vào `TELEGRAM_BOT_TOKEN`; không gửi token qua chat hoặc commit Git.
+3. Gửi một tin cho bot, sau đó mở cục bộ
+   `https://api.telegram.org/bot<TOKEN>/getUpdates` và lấy `message.chat.id`.
+4. Điền một hoặc nhiều ID chat riêng của analyst vào `ALLOWED_CHAT_IDS`, phân cách
+   bằng dấu phẩy. Không dùng ID group chung vì quyền lệnh được cấp theo chat ID.
+5. Chạy `docker compose up -d bot` và kiểm tra `docker compose ps`.
+
+Chat ngoài allowlist bị bỏ qua hoàn toàn; log chỉ ghi ID, không ghi nội dung gửi đến.
+
+## Cấu hình môi trường
+
+Tất cả cấu hình nằm trong `.env`; file này đã bị Git và Docker ignore.
+
+| Biến | Mặc định | Mô tả |
+|---|---|---|
+| `APP_NAME` | `Network Security Monitor` | Tiêu đề dashboard |
+| `APP_ENV` | `development` | `production` bật kiểm tra secret nghiêm ngặt |
+| `APP_URL` | `http://localhost:8000` | URL cho nút Open dashboard |
+| `BIND_HOST` | `127.0.0.1` | Interface host được publish; bind public bắt buộc đổi secret |
+| `DASHBOARD_PORT` | `8000` | Cổng dashboard trên host |
+| `DATABASE_PATH` | `./data/monitor.db` | SQLite local; Compose ghi đè |
+| `LOG_LEVEL` / `JSON_LOGS` | `INFO` / `false` | Mức log và định dạng JSON |
+| `ALERT_SOURCE` | `mock` | `mock` hoặc stub `wazuh` |
+| `RAW_LOG_MAX_LENGTH` | `4096` | Giới hạn raw log trước lưu trữ |
+| `ADMIN_USERNAME` | `admin` | Tên đăng nhập dashboard |
+| `ADMIN_PASSWORD_HASH` | demo hash | PBKDF2-SHA256, không lưu password thô |
+| `SESSION_SECRET` | placeholder | Secret cookie, tối thiểu 32 ký tự ở production |
+| `SESSION_HTTPS_ONLY` | `false` | Bật sau HTTPS reverse proxy |
+| `DEVICE_SILENT_MINUTES` | `15` | Ngưỡng alert thiết bị im lặng |
+| `TELEGRAM_BOT_TOKEN` | trống | Token BotFather |
+| `ALLOWED_CHAT_IDS` | trống | Allowlist chat riêng của analyst, phân cách dấu phẩy |
+| `TELEGRAM_MIN_SEVERITY` | `medium` | Mức thấp nhất gửi Telegram |
+| `TELEGRAM_TIMEZONE` | `Asia/Ho_Chi_Minh` | Timezone IANA trong tin nhắn |
+| `NOTIFICATION_INTERVAL_SECONDS` | `2` | Chu kỳ đọc outbox |
+| `DEDUP_WINDOW_SECONDS` | `60` | Cửa sổ gộp cùng dedup key |
+| `MAX_MESSAGES_PER_MINUTE` | `20` | Giới hạn tin riêng toàn cục |
+| `TELEGRAM_RATE_WINDOW_SECONDS` | `60` | Cửa sổ rate limit |
+| `MOCK_MODE` / `MOCK_GENERATION_MODE` | `true` / `replay` | Nhãn demo và mode generator |
+| `MOCK_FIXTURE_PATH` | `./fixtures/alerts.json` | Fixture alert chuẩn |
+| `MOCK_RATE_PER_SECOND` | `0` | Tốc độ phát; 0 là tức thì |
+| `MOCK_DURATION_SECONDS` | `60` | Khoảng thời gian mô phỏng |
+| `MOCK_SCENARIO` | trống | Scenario mặc định tùy chọn |
+| `MOCK_SEVERITY_DISTRIBUTION` | `low=40,...` | Trọng số random mode |
+| `SCENARIO_NAME` / `SCENARIO_DURATION` | `ssh_bruteforce` / `60` | Make/Compose scenario |
+| `WAZUH_INDEXER_URL` | `https://wazuh-indexer:9200` | URL Indexer ở VM riêng |
+| `WAZUH_INDEX_PATTERN` | `wazuh-alerts-*` | Pattern Phase 2 |
+| `WAZUH_USERNAME` / `WAZUH_PASSWORD` | trống | Tài khoản chỉ đọc qua `.env` |
+| `WAZUH_VERIFY_TLS` | `true` | Luôn xác minh TLS |
+| `WAZUH_CA_FILE` | trống | CA bundle được mount |
+| `WAZUH_INITIAL_LOOKBACK_MINUTES` | `5` | Lookback lần đầu |
+| `POLL_INTERVAL_SECONDS` | `10` | Chu kỳ source/watcher |
+| `SEVERITY_CONFIG` | `./config/severity_map.yaml` | Mapping level → severity |
+| `RULES_CATALOG` | `./config/rules_catalog.yaml` | Catalog use case |
+
+## Lệnh Telegram
+
+| Lệnh | Chức năng |
+|---|---|
+| `/start`, `/help` | Hướng dẫn nhanh |
+| `/status` | Source health, alert cuối, DB, queue, uptime |
+| `/last [n]` | Tối đa 20 alert gần nhất |
+| `/top_sources` | Top source IP 24 giờ |
+| `/stats` | Severity và device type 24 giờ |
+| `/mute <rule_id> <minutes>` | Tắt thông báo rule |
+| `/unmute <rule_id>` | Bỏ mute rule |
+| `/ack <alert_id>` | Acknowledge alert |
+
+Alert có nút **Acknowledge**, **Mute rule 1h** và **Open dashboard**. Callback
+dùng prefix ngắn dưới giới hạn 64 byte của Telegram nhưng chỉ resolve khi duy nhất.
+
+## Mock, scenario và seed
 
 ```bash
-python3 -m venv .venv
-.venv/bin/pip install -r requirements-dev.txt
-cp .env.example .env
-.venv/bin/uvicorn app.main:app --reload --env-file .env
+python -m app.mock --mode replay --rate 2
+python -m app.mock --mode random --count 100 \
+  --severity-distribution 'low=40,medium=35,high=20,critical=5'
+python -m app.mock --scenario ssh_bruteforce --duration 60 --rate 0
+make seed
 ```
 
-Tạo password hash mới:
+Scenario: `ssh_bruteforce`, `port_scan`, `syn_flood`, `arp_spoof`,
+`config_change`, `device_silent`. CLI luôn đi qua
+`MockAdapter → normalizer → Alert v1 → IngestionPipeline → SQLite`.
+
+## Docker và Wazuh VM
+
+Wazuh không nằm trong Compose. Ở Phase 2, đặt `WAZUH_INDEXER_URL` thành DNS/IP mà
+container truy cập được, tạo user Indexer chỉ đọc và mount CA bằng Compose override
+vào đúng `WAZUH_CA_FILE`. Không tắt TLS verification trong deployment.
+
+Build multi-architecture từ máy có builder hỗ trợ:
 
 ```bash
-.venv/bin/python -m app.password_hash
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -f docker/Dockerfile -t your-registry/networksec:phase1 --push .
 ```
 
-## Kết nối Wazuh
+Base image và dependency không khóa theo CPU; builder chọn wheel phù hợp platform.
 
-1. Đặt `MOCK_MODE=false`.
-2. Điền `WAZUH_INDEXER_URL`, `WAZUH_USERNAME`, `WAZUH_PASSWORD`.
-3. Giữ `WAZUH_VERIFY_TLS=true`. Nếu lab dùng CA tự ký, mount CA vào container và đặt `WAZUH_CA_FILE` tới đường dẫn đó.
-4. Kiểm tra index pattern `wazuh-alerts-*` và chạy truy vấn mẫu trong [docs/sample-wazuh-query.json](docs/sample-wazuh-query.json).
-5. Khởi động lại container và xem `/status` trên bot hoặc `/health` trên web.
-
-Không dùng `WAZUH_VERIFY_TLS=false` trừ lúc chẩn đoán ngắn trong mạng lab cô lập.
-
-## Telegram bot
-
-1. Mở Telegram, trò chuyện với `@BotFather`, chạy `/newbot` và giữ token bí mật.
-2. Gửi một tin nhắn cho bot mới. Truy cập `https://api.telegram.org/bot<TOKEN>/getUpdates` cục bộ để đọc trường `message.chat.id`.
-3. Điền token vào `TELEGRAM_BOT_TOKEN` và danh sách ID, phân cách bằng dấu phẩy, vào `ALLOWED_CHAT_IDS`.
-4. Khởi động lại ứng dụng. Chat không nằm trong allowlist bị bỏ qua hoàn toàn.
-
-Lệnh: `/start`, `/help`, `/status`, `/last [n]`, `/top_sources`, `/stats`, `/mute <rule_id> <minutes>`, `/ack <alert_id>`.
-
-## Biến môi trường
-
-| Biến | Mặc định | Ý nghĩa |
-|---|---:|---|
-| `MOCK_MODE` | `true` | Không kết nối Wazuh khi demo độc lập |
-| `DATABASE_PATH` | `/app/data/monitor.db` | SQLite bền vững |
-| `ADMIN_USERNAME` | `admin` | Tài khoản dashboard |
-| `ADMIN_PASSWORD_HASH` | — | PBKDF2-SHA256, không lưu mật khẩu thô |
-| `SESSION_SECRET` | — | Khóa ký cookie phiên, tối thiểu 32 ký tự ngẫu nhiên |
-| `SESSION_HTTPS_ONLY` | `false` | Đặt `true` khi chạy sau HTTPS proxy |
-| `DEVICE_SILENT_MINUTES` | `15` | Ngưỡng thiết bị im lặng |
-| `WAZUH_INDEXER_URL` | `https://wazuh-indexer:9200` | URL Wazuh Indexer |
-| `WAZUH_INDEX_PATTERN` | `wazuh-alerts-*` | Index alert |
-| `WAZUH_VERIFY_TLS` | `true` | Xác minh chứng chỉ TLS |
-| `WAZUH_CA_FILE` | trống | CA tùy chỉnh cho chứng chỉ tự ký |
-| `POLL_INTERVAL_SECONDS` | `10` | Chu kỳ đọc Wazuh |
-| `TELEGRAM_BOT_TOKEN` | trống | Token; để trống sẽ tắt bot |
-| `ALLOWED_CHAT_IDS` | trống | Allowlist ID, phân cách dấu phẩy |
-| `MINIMUM_SEVERITY` | `medium` | Mức nhỏ nhất gửi Telegram |
-| `DEDUP_WINDOW_SECONDS` | `60` | Cửa sổ gộp alert giống nhau |
-| `TELEGRAM_RATE_LIMIT` | `20` | Số thông báo tối đa mỗi cửa sổ |
-
-Xem đầy đủ và giá trị mẫu trong [.env.example](.env.example).
-
-## Dashboard
-
-- Overview: tổng số, timeline, severity, device type, top source và top rule.
-- Alerts: lọc, tìm kiếm, phân trang, raw log, acknowledge và CSV.
-- Devices: last seen, số alert, active/silent.
-- Attack scenarios: ghi kỹ thuật, công cụ, rule mong đợi, kết quả và detection time; xuất CSV cho báo cáo.
-
-## Kiểm thử
+## Kiểm thử và chất lượng
 
 ```bash
-.venv/bin/ruff check app tests
-.venv/bin/pytest
+make test
+make lint
+.venv/bin/pip-audit -r requirements.txt
+docker compose config -q
 ```
 
-Các test chính bao phủ normalization, severity mapping, parameterized SQLite, dedup/rate limit, authorization bot, cursor Wazuh, CSRF, XSS escaping, bộ lọc CSV và thiết bị silent.
+Test bao phủ schema/ID deterministic, migration SQLite, mock modes/scenario, bot
+escaping/dedup/rate/auth/callback, silent watcher, CSRF/XSS/CSV và dashboard. E2E
+Playwright cần Chromium và quyền bind loopback.
 
-## Làm việc nhóm trên GitHub
+## Cấu trúc dự án
 
-- Mỗi đầu việc có GitHub Issue và một nhánh ngắn: `feature/wazuh-poller`, `feature/telegram-bot`, `feature/dashboard`.
-- Mở Pull Request vào `main`; ít nhất một thành viên khác review.
-- Không commit `.env`, token, mật khẩu, certificate private key hoặc log thật.
-- Chia vai trò gợi ý: hạ tầng/Wazuh; backend/bot; dashboard/test/tài liệu. Hai người còn lại đều phải đọc và giải thích được Pull Request trước khi merge.
+```text
+app/                API, web, schema, adapters, services và aiogram bot
+config/             severity map và rules catalog song ngữ
+fixtures/           alert JSON + log vendor thực tế
+docs/               schema, catalog và demo script
+tests/              unit, integration và Playwright E2E
+docker/             multi-stage Dockerfile
+docker-compose.yml  dashboard, bot và mock profile
+```
 
 ## Khắc phục lỗi
 
-- Dashboard trống: chạy mock generator hoặc kiểm tra `/health`, URL/index pattern và quyền đọc Wazuh.
-- TLS lỗi: cung cấp CA đúng qua `WAZUH_CA_FILE`; kiểm tra hostname trong certificate.
-- Bot im lặng: kiểm tra token, `ALLOWED_CHAT_IDS`, `MINIMUM_SEVERITY` và rule có bị mute không.
-- Nhiều alert nhưng ít tin nhắn: đây có thể là dedup/rate limit; xem `DEDUP_WINDOW_SECONDS` và `TELEGRAM_RATE_LIMIT`.
-- Thiết bị bị đánh dấu silent: trang này dựa trên alert cuối cùng, không phải syslog heartbeat. Với production nên thêm heartbeat rule riêng.
+- `bot` unhealthy: kiểm tra token/allowlist và `docker compose logs bot`; token sai
+  sẽ không tạo `/tmp/bot.ready`.
+- Dashboard trống: chạy `make seed` hoặc scenario, rồi chọn time range 7 ngày.
+- Không có Telegram alert: kiểm tra severity threshold, mute và queue qua `/status`.
+- `ALERT_SOURCE=wazuh`: Phase 1 ghi `not-implemented` nhưng không crash loop.
+- SQLite locked: chỉ dùng shared named volume local, không đặt DB trên NFS.
+- TLS/CA Wazuh: xác minh hostname, mount đúng CA và không log credentials.
 
-Luồng demo chi tiết nằm trong [DEMO.md](DEMO.md), còn giải thích code dành cho phần bảo vệ đồ án nằm trong [docs/CODE_GUIDE.md](docs/CODE_GUIDE.md).
+## Bảo mật
+
+- Log thiết bị là attacker-controlled: Pydantic validate/truncate, Jinja autoescape,
+  Telegram escape và CSV chống formula injection.
+- SQL parameterized; callback chỉ resolve prefix hex duy nhất.
+- Container non-root, root filesystem read-only, drop capabilities, log rotation,
+  bind localhost mặc định.
+- Production từ chối session secret mặc định/ngắn. Không commit `.env`, token, CA
+  private key, database hoặc log thật.
+
+## Roadmap Phase 2
+
+- Hiện thực `WazuhAdapter` bằng OpenSearch `search_after` trên `@timestamp` + `_id`.
+- Bổ sung Suricata EVE JSON và heartbeat telemetry riêng.
+- Active response có phê duyệt analyst, audit trail và rollback.
+- PostgreSQL/Redis khi scale; SSO/RBAC và login throttling cho production.
+
+Xem thêm [Alert Schema](docs/alert_schema.md),
+[Rules Catalog](docs/rules_catalog.md) và [Demo script](docs/DEMO.md).
