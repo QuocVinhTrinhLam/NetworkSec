@@ -3,12 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#07111c">
+  <meta name="theme-color" content="#080d14">
   <title>{% block title %}{{ app_name }}{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', path='/styles.css') }}">
-  <script defer src="{{ url_for('static', path='/htmx.min.js') }}"></script>
-  <script defer src="{{ url_for('static', path='/chart.umd.min.js') }}"></script>
   <script defer src="{{ url_for('static', path='/app.js') }}"></script>
+  {% block head_scripts %}{% endblock %}
 </head>
 <body>
   <a class="skip-link" href="#main-content">Skip to main content</a>
@@ -42,9 +41,9 @@
         </a>
       </nav>
 
-      <div class="sidebar-status">
-        <div class="status-heading"><span class="status-dot" aria-hidden="true"></span>Monitoring active</div>
-        <p>Wazuh event stream</p>
+      <div class="sidebar-status status-{{ monitor_status.tone }}">
+        <div class="status-heading"><span class="status-dot" aria-hidden="true"></span>{{ monitor_status.label }}</div>
+        <p>{{ monitor_status.detail }}</p>
       </div>
     </aside>
 
@@ -61,7 +60,7 @@
           <strong>Security Operations Center</strong>
         </div>
         <div class="topbar-actions">
-          <span class="environment-badge"><span class="status-dot" aria-hidden="true"></span>Live monitoring</span>
+          <span class="environment-badge status-{{ monitor_status.tone }}"><span class="status-dot" aria-hidden="true"></span>{{ monitor_status.label }}</span>
           <span class="analyst" aria-label="Signed in as {{ current_user }}">
             <span class="analyst-avatar" aria-hidden="true">{{ current_user[:1] | upper }}</span>
             <span><small>Analyst</small><strong>{{ current_user }}</strong></span>

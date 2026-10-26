@@ -11,7 +11,7 @@
     <h1>Alert queue</h1>
     <p class="muted">Triage detections, inspect affected entities, and prioritize analyst response.</p>
   </div>
-  <a class="button export-button" href="/alerts/export.csv?time_range={{ filters.time_range | urlencode }}&amp;severity={{ filters.severity | urlencode }}">
+  <a class="button export-button" href="/alerts/export.csv?time_range={{ filters.time_range | urlencode }}&amp;severity={{ filters.severity | urlencode }}&amp;device={{ filters.device | urlencode }}&amp;rule_id={{ filters.rule_id | urlencode }}&amp;source_ip={{ filters.source_ip | urlencode }}&amp;search={{ filters.search | urlencode }}">
     <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 20h14"/></svg>
     Export CSV
   </a>
@@ -31,12 +31,12 @@
   <div class="queue-stat queue-stat-critical">
     <span>Critical</span>
     <strong>{{ critical_on_page }}</strong>
-    <small>Immediate review</small>
+    <small>On this page</small>
   </div>
   <div class="queue-stat queue-stat-high">
     <span>High</span>
     <strong>{{ high_on_page }}</strong>
-    <small>Prioritize next</small>
+    <small>On this page</small>
   </div>
 </section>
 
@@ -92,20 +92,21 @@
       <h2 id="queue-title">Detections</h2>
       <p>{{ total }} {{ 'event' if total == 1 else 'events' }} found</p>
     </div>
-    <span class="queue-live"><span class="status-dot"></span>Live ingestion</span>
+    <span class="queue-live status-{{ monitor_status.tone }}"><span class="status-dot"></span>{{ monitor_status.label }}</span>
   </header>
 
   <div class="table-wrap">
     <table class="alert-table">
+      <caption class="sr-only">Security alerts matching the current filters</caption>
       <thead>
         <tr>
-          <th>Severity</th>
-          <th>Detection</th>
-          <th>Source / destination</th>
-          <th>Asset</th>
-          <th>Observed</th>
-          <th>State</th>
-          <th><span class="sr-only">Open alert</span></th>
+          <th scope="col">Severity</th>
+          <th scope="col">Detection</th>
+          <th scope="col">Source / destination</th>
+          <th scope="col">Asset</th>
+          <th scope="col">Observed</th>
+          <th scope="col">State</th>
+          <th scope="col"><span class="sr-only">Open alert</span></th>
         </tr>
       </thead>
       <tbody>
@@ -118,21 +119,21 @@
           </td>
           <td data-label="Source / destination" class="network-cell">
             <code>{{ alert.source_ip or 'Unknown source' }}</code>
-            {% if alert.dest_ip %}<small><span aria-hidden="true">→</span> {{ alert.dest_ip }}</small>{% endif %}
+            {% if alert.dest_ip %}<small><span class="sr-only">to </span><span aria-hidden="true">→</span> {{ alert.dest_ip }}</small>{% endif %}
           </td>
           <td data-label="Asset" class="asset-cell">
             <strong>{{ alert.device_name }}</strong>
             <small>{{ alert.device_type }}</small>
           </td>
           <td data-label="Observed" class="observed-cell">
-            <time datetime="{{ alert.timestamp }}">{{ alert.timestamp[0:10] }}<span>{{ alert.timestamp[11:19] }} UTC</span></time>
+            <time datetime="{{ alert.timestamp }}">{{ alert.timestamp[0:10] }}<span>{{ alert.timestamp[11:19] }}</span></time>
           </td>
           <td data-label="State">
             <span class="state-pill {{ 'state-acknowledged' if alert.acknowledged else 'state-new' }}">
               <span></span>{{ 'Acknowledged' if alert.acknowledged else 'New' }}
             </span>
           </td>
-          <td class="row-action"><a href="/alerts/{{ alert.id }}" aria-label="Investigate {{ alert.rule_description }}">Investigate <span aria-hidden="true">→</span></a></td>
+          <td class="row-action" aria-hidden="true"><span>Open <span>→</span></span></td>
         </tr>
         {% else %}
         <tr>

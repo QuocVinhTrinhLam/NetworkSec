@@ -1,11 +1,82 @@
 {% extends "base.html" %}
-{% block title %}Alert {{ alert.id }} · {{ app_name }}{% endblock %}
+{% block title %}{{ alert.rule_description }} · {{ app_name }}{% endblock %}
 {% block content %}
-<div class="page-heading"><div><h1>{{ alert.rule_description }}</h1><p class="muted">Alert {{ alert.id }}</p></div><span class="badge severity-{{ alert.severity }}">{{ alert.severity }}</span></div>
-<section class="detail-grid panel">
-  {% for label, value in [('Time', alert.timestamp), ('Device', alert.device_name), ('Type', alert.device_type), ('Source IP', alert.source_ip), ('Destination IP', alert.dest_ip), ('User', alert.username), ('Rule', alert.rule_id), ('MITRE', alert.mitre_id), ('Use case', alert.use_case_id)] %}<div><dt>{{ label }}</dt><dd>{{ value or '-' }}</dd></div>{% endfor %}
-</section>
-{% if alert.recommended_response %}<section class="panel"><h2>Recommended response</h2><p>{{ alert.recommended_response }}</p></section>{% endif %}
-<section class="panel"><h2>Raw log</h2><pre>{{ alert.raw_log }}</pre></section>
-{% if not alert.acknowledged %}<form method="post" action="/alerts/{{ alert.id }}/ack"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="primary" type="submit">Acknowledge alert</button></form>{% else %}<p class="success">Acknowledged by {{ alert.acknowledged_by }} at {{ alert.acknowledged_at }}</p>{% endif %}
+<a class="back-link" href="/alerts"><span aria-hidden="true">←</span> Back to alert queue</a>
+
+<header class="detail-hero panel severity-border-{{ alert.severity }}">
+  <div class="detail-hero-copy">
+    <p class="eyebrow">Alert investigation · {{ alert.id }}</p>
+    <h1>{{ alert.rule_description }}</h1>
+    <p class="detail-subtitle">
+      Observed on <strong>{{ alert.device_name }}</strong>
+      <span aria-hidden="true">·</span>
+      <time datetime="{{ alert.timestamp }}">{{ alert.timestamp[0:10] }} at {{ alert.timestamp[11:19] }}</time>
+    </p>
+  </div>
+  <div class="detail-actions">
+    <div class="detail-badges">
+      <span class="badge severity-{{ alert.severity }}">{{ alert.severity }}</span>
+      <span class="state-pill {{ 'state-acknowledged' if alert.acknowledged else 'state-new' }}"><span></span>{{ 'Acknowledged' if alert.acknowledged else 'New' }}</span>
+    </div>
+    {% if not alert.acknowledged %}
+    <form method="post" action="/alerts/{{ alert.id }}/ack">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <button class="primary" type="submit">Acknowledge alert</button>
+    </form>
+    {% else %}
+    <p class="acknowledged-meta">Acknowledged by <strong>{{ alert.acknowledged_by }}</strong><br><time datetime="{{ alert.acknowledged_at }}">{{ alert.acknowledged_at[0:10] }} at {{ alert.acknowledged_at[11:19] }}</time></p>
+    {% endif %}
+  </div>
+</header>
+
+<div class="detail-layout">
+  <div class="detail-main">
+    <section class="panel evidence-panel" aria-labelledby="evidence-title">
+      <header class="section-heading">
+        <div><p class="panel-kicker">Event evidence</p><h2 id="evidence-title">Observed entities</h2></div>
+      </header>
+      <dl class="detail-grid detail-facts">
+        <div><dt>Source IP</dt><dd><code>{{ alert.source_ip or 'Unknown' }}</code></dd></div>
+        <div><dt>Destination IP</dt><dd><code>{{ alert.dest_ip or 'Unknown' }}</code></dd></div>
+        <div><dt>User</dt><dd>{{ alert.username or 'Not identified' }}</dd></div>
+        <div><dt>Asset</dt><dd>{{ alert.device_name }}</dd></div>
+        <div><dt>Asset type</dt><dd>{{ alert.device_type | title }}</dd></div>
+        <div><dt>Observed</dt><dd><time datetime="{{ alert.timestamp }}">{{ alert.timestamp[0:10] }} {{ alert.timestamp[11:19] }}</time></dd></div>
+      </dl>
+    </section>
+
+    <section class="panel raw-log-panel" aria-labelledby="raw-log-title">
+      <header class="section-heading">
+        <div><p class="panel-kicker">Original telemetry</p><h2 id="raw-log-title">Raw event</h2></div>
+        <span class="panel-meta">Read-only evidence</span>
+      </header>
+      <pre><code>{{ alert.raw_log }}</code></pre>
+    </section>
+  </div>
+
+  <aside class="detail-aside" aria-label="Investigation context">
+    <section class="panel response-panel">
+      <span class="response-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M12 3 4.5 6v5.5c0 4.4 3 7.7 7.5 9.5 4.5-1.8 7.5-5.1 7.5-9.5V6L12 3Z"/><path d="M12 8v4m0 3h.01"/></svg>
+      </span>
+      <p class="panel-kicker">Analyst guidance</p>
+      <h2>Recommended response</h2>
+      {% if alert.recommended_response %}
+      <p>{{ alert.recommended_response }}</p>
+      {% else %}
+      <p class="muted">No response playbook is attached. Validate the affected asset and source before disposition.</p>
+      {% endif %}
+    </section>
+
+    <section class="panel detection-context">
+      <p class="panel-kicker">Detection context</p>
+      <h2>Rule mapping</h2>
+      <dl>
+        <div><dt>Rule ID</dt><dd><code>{{ alert.rule_id }}</code></dd></div>
+        <div><dt>MITRE technique</dt><dd>{{ alert.mitre_id or 'Not mapped' }}{% if alert.mitre_name %}<small>{{ alert.mitre_name }}</small>{% endif %}</dd></div>
+        <div><dt>Use case</dt><dd>{{ alert.use_case_id or 'Not mapped' }}</dd></div>
+      </dl>
+    </section>
+  </aside>
+</div>
 {% endblock %}

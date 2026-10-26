@@ -67,6 +67,8 @@ def test_authentication_csrf_and_output_escaping(tmp_path: Path) -> None:
         login(client)
         detail = client.get("/alerts/web-alert")
         assert detail.status_code == 200
+        assert "Back to alert queue" in detail.text
+        assert '<dl class="detail-grid detail-facts">' in detail.text
         assert "<script>owned()" not in detail.text
         assert "&lt;script&gt;owned()&lt;/script&gt;" in detail.text
 
@@ -77,10 +79,18 @@ def test_alert_filters_and_csv_export(tmp_path: Path) -> None:
         page = client.get("/alerts?time_range=all&severity=high&source_ip=203.0.113.5")
         assert page.status_code == 200
         assert "web-alert" in page.text
-        csv_response = client.get("/alerts/export.csv?time_range=all&severity=high")
+        search_page = client.get("/alerts?time_range=all&search=203.0.113.5")
+        assert "web-alert" in search_page.text
+        csv_response = client.get(
+            "/alerts/export.csv?time_range=all&severity=high&source_ip=203.0.113.5"
+        )
         assert csv_response.status_code == 200
         assert "web-alert" in csv_response.text
         assert "'=HYPERLINK" in csv_response.text
+        excluded = client.get(
+            "/alerts/export.csv?time_range=all&severity=high&source_ip=198.51.100.10"
+        )
+        assert "web-alert" not in excluded.text
 
 
 def test_device_becomes_silent(tmp_path: Path) -> None:
@@ -88,7 +98,8 @@ def test_device_becomes_silent(tmp_path: Path) -> None:
         login(client)
         page = client.get("/devices")
         assert page.status_code == 200
-        assert "silent" in page.text
+        assert "Quiet in window" in page.text
+        assert "not that the device is offline" in page.text
 
 
 def test_dashboard_renders_soc_command_center_and_live_queue(tmp_path: Path) -> None:
@@ -118,7 +129,8 @@ def test_dashboard_renders_soc_command_center_and_live_queue(tmp_path: Path) -> 
         assert "SOC Command Center" in page.text
         assert 'aria-label="Primary navigation"' in page.text
         assert 'aria-current="page"' in page.text
-        assert "Investigation queue" in page.text
+        assert "Recent detections" in page.text
+        assert "Demo mode" in page.text
         assert "live-critical-alert" in page.text
         assert "edge-fw-01" in page.text
         assert '</script><script>alert("owned")</script>' not in page.text

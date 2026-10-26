@@ -1,10 +1,15 @@
 (() => {
+  const styles = getComputedStyle(document.documentElement);
+  const token = (name, fallback) => styles.getPropertyValue(name).trim() || fallback;
   const colors = {
-    critical: "#ff453a",
-    high: "#ff9f43",
-    medium: "#f5cb5c",
-    low: "#56c2ff",
+    critical: token("--critical", "#ff5c70"),
+    high: token("--high", "#ff9e4a"),
+    medium: token("--medium", "#e6c65a"),
+    low: token("--low", "#54b7f4"),
   };
+  const accent = token("--accent", "#3cc8ff");
+  const panel = token("--panel", "#101721");
+  const background = token("--bg", "#080d14");
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   // Màu sắc nhãn trục được tối ưu tương phản (#9cb2c6 > 8:1 đối với nền panel tối)
@@ -26,8 +31,8 @@
     plugins: {
       legend: { display: false },
       tooltip: {
-        backgroundColor: "#142435",
-        borderColor: "#2b4258",
+        backgroundColor: token("--panel-raised", "#151f2b"),
+        borderColor: token("--line-strong", "#30445d"),
         borderWidth: 1,
         titleColor: "#f4f8fb",
         bodyColor: "#aab9c7",
@@ -114,13 +119,13 @@
             datasets: [{
               label: "Alerts",
               data: timelineValues,
-              borderColor: "#00e5ff",
-              backgroundColor: "rgba(0, 229, 255, 0.12)",
+              borderColor: accent,
+              backgroundColor: "rgba(60, 200, 255, 0.10)",
               borderWidth: 2,
               pointRadius: timeline.length > 12 ? 3 : 4,
               pointHoverRadius: 6,
-              pointBackgroundColor: "#080d14",
-              pointBorderColor: "#00e5ff",
+              pointBackgroundColor: background,
+              pointBorderColor: accent,
               fill: true,
               tension: 0.3,
             }],
@@ -190,7 +195,7 @@
             datasets: [{
               data: severityValues,
               backgroundColor: severityColors,
-              borderColor: "#101721",
+              borderColor: panel,
               borderWidth: 2,
               hoverOffset: severity.length > 0 ? 4 : 0,
             }],
@@ -265,8 +270,8 @@
             datasets: [{
               label: "Alerts",
               data: deviceValues,
-              backgroundColor: "rgba(60, 200, 255, 0.7)",
-              borderColor: "#3cc8ff",
+              backgroundColor: "rgba(60, 200, 255, 0.55)",
+              borderColor: accent,
               borderWidth: 1,
               borderRadius: 4,
               maxBarThickness: 34,
@@ -304,6 +309,26 @@
     }
   };
 
+  const dashboard = document.getElementById("dashboard-content");
+  const refreshButton = document.querySelector(".refresh-button");
+  const liveToggle = document.querySelector("[data-live-toggle]");
+  const liveLabel = document.querySelector("[data-live-label]");
+  let livePaused = false;
+
+  const setRefreshState = (state) => {
+    const status = document.getElementById("last-updated");
+    if (!status) return;
+    if (state === "loading") status.textContent = "Refreshing telemetry…";
+    if (state === "error") status.textContent = "Refresh failed · Try again";
+  };
+
+  liveToggle?.addEventListener("click", () => {
+    livePaused = !livePaused;
+    liveToggle.setAttribute("aria-pressed", String(livePaused));
+    liveToggle.classList.toggle("is-paused", livePaused);
+    if (liveLabel) liveLabel.textContent = livePaused ? "Resume live" : "Pause live";
+  });
+
   // Đảm bảo vẽ biểu đồ khi trang nạp lần đầu, ngay cả khi Chart.js được tải bất đồng bộ (defer)
   const initCharts = () => {
     if (typeof Chart === "undefined") {
@@ -325,18 +350,31 @@
 
   // Khi HTMX hoàn tất swap DOM mới:
   // Cập nhật dữ liệu tức thì lên các biểu đồ được bảo lưu (hx-preserve), không remount
+  // Expose refresh progress and errors without moving the dashboard layout.
+  document.addEventListener("htmx:beforeRequest", (event) => {
+    if (event.detail.target?.id !== "dashboard-content") return;
+    dashboard?.setAttribute("aria-busy", "true");
+    if (refreshButton) refreshButton.disabled = true;
+    setRefreshState("loading");
+  });
   document.addEventListener("htmx:afterSwap", (event) => {
     if (event.target.id === "dashboard-content") {
       window.renderDashboardCharts(true);
       markRefreshed();
     }
   });
+  document.addEventListener("htmx:afterRequest", (event) => {
+    if (event.detail.target?.id !== "dashboard-content") return;
+    dashboard?.removeAttribute("aria-busy");
+    if (refreshButton) refreshButton.disabled = false;
+    if (!event.detail.successful) setRefreshState("error");
+  });
 
   // Tự động làm mới dữ liệu telemetry định kỳ mỗi 20 giây khi người dùng không tương tác
   window.setInterval(() => {
     const root = document.getElementById("dashboard-content");
     const userIsInteracting = root?.contains(document.activeElement) || root?.querySelector("details[open]");
-    if (!root || document.hidden || userIsInteracting || root.classList.contains("htmx-request")) return;
+    if (!root || livePaused || document.hidden || userIsInteracting || root.classList.contains("htmx-request")) return;
     if (typeof htmx !== "undefined") {
       htmx.ajax("GET", "/partials/dashboard", { target: "#dashboard-content", swap: "innerHTML" });
     }

@@ -247,11 +247,14 @@ class Database:
                 """
                 (rule_description LIKE ? ESCAPE '\\'
                  OR raw_log LIKE ? ESCAPE '\\'
-                 OR device_name LIKE ? ESCAPE '\\')
+                 OR device_name LIKE ? ESCAPE '\\'
+                 OR rule_id LIKE ? ESCAPE '\\'
+                 OR source_ip LIKE ? ESCAPE '\\'
+                 OR dest_ip LIKE ? ESCAPE '\\')
                 """
             )
             escaped = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-            parameters.extend([f"%{escaped}%"] * 3)
+            parameters.extend([f"%{escaped}%"] * 6)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         safe_page_size = max(1, min(page_size, 5000))
         offset = (max(1, page) - 1) * safe_page_size

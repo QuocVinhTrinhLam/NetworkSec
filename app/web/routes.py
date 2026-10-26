@@ -32,11 +32,31 @@ def create_router(database: Database, settings: Settings, templates: Jinja2Templ
     router = APIRouter()
 
     def context(request: Request, **values: Any) -> dict[str, Any]:
+        wazuh_health = database.get_state("wazuh_health")
+        if settings.mock_mode:
+            monitor_status = {
+                "label": "Demo mode",
+                "detail": "Simulated alert stream",
+                "tone": "demo",
+            }
+        elif wazuh_health == "connected":
+            monitor_status = {
+                "label": "Wazuh connected",
+                "detail": "Indexer event stream",
+                "tone": "online",
+            }
+        else:
+            monitor_status = {
+                "label": "Wazuh unavailable",
+                "detail": "Connection requires attention",
+                "tone": "offline",
+            }
         return {
             "request": request,
             "app_name": settings.app_name,
             "csrf_token": csrf_token(request),
             "current_user": request.session.get("user"),
+            "monitor_status": monitor_status,
             **values,
         }
 
@@ -174,12 +194,24 @@ def create_router(database: Database, settings: Settings, templates: Jinja2Templ
         _user: Annotated[str, Depends(require_user)],
         time_range: str = Query("24"),
         severity: str = Query("", max_length=20),
+        device: str = Query("", max_length=255),
+        rule_id: str = Query("", max_length=64),
+        source_ip: str = Query("", max_length=64),
+        search: str = Query("", max_length=200),
     ) -> Response:
         try:
             hours = parse_hours(time_range)
         except ValueError as error:
             raise HTTPException(status_code=422, detail="Invalid time range") from error
-        rows, _ = database.search_alerts(hours=hours, severity=severity, page_size=5000)
+        rows, _ = database.search_alerts(
+            hours=hours,
+            severity=severity,
+            device=device,
+            rule_id=rule_id,
+            source_ip=source_ip,
+            search=search,
+            page_size=5000,
+        )
         output = io.StringIO()
         fields = [
             "id",

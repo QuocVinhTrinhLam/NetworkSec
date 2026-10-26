@@ -50,7 +50,7 @@
 
   <article class="panel queue-panel">
     <header class="panel-heading">
-      <div><p class="panel-kicker">Triage</p><h2>Investigation queue</h2></div>
+      <div><p class="panel-kicker">Latest signals</p><h2>Recent detections</h2></div>
       <a class="text-link" href="/alerts">View all alerts <span aria-hidden="true">→</span></a>
     </header>
     <div class="alert-feed">
@@ -59,9 +59,9 @@
         <span class="feed-severity severity-bg-{{ alert.severity }}" aria-hidden="true"></span>
         <span class="alert-main">
           <span><span class="badge severity-{{ alert.severity }}">{{ alert.severity }}</span><strong>{{ alert.rule_description }}</strong></span>
-          <small><code>{{ alert.id }}</code> · {{ alert.device_name }} · {{ alert.source_ip or 'source unknown' }}</small>
+          <small><code>{{ alert.rule_id }}</code> · {{ alert.device_name }} · {{ alert.source_ip or 'source unknown' }}</small>
         </span>
-        <time datetime="{{ alert.timestamp }}">{{ alert.timestamp }}</time>
+        <time datetime="{{ alert.timestamp }}">{{ alert.timestamp[11:16] }}<span>{{ alert.timestamp[0:10] }}</span></time>
         <span class="row-arrow" aria-hidden="true">→</span>
       </a>
       {% else %}
