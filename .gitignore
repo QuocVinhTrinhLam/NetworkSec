@@ -16,3 +16,45 @@ data/
 # Local AI agent configuration and machine-specific paths
 .agents/
 AGENTS.md
+
+# GNS3, QEMU, VMware, and offline backup artifacts
+*.vmdk
+*.qcow
+*.qcow2
+*.img
+*.iso
+*.vdi
+*.vhd
+*.vhdx
+*.ova
+*.ovf
+*.vmem
+*.vmss
+*.vmsn
+*.lck
+*.gns3project
+gns3/backups/
+gns3/backup-archives/
+
+# Packet captures and transient emulator data
+*.pcap
+*.pcapng
+*.cap
+*.pid
+
+# Sensitive device and host configuration exports
+gns3/configs/pfsense/config.xml
+gns3/configs/**/config.xml
+gns3/host-settings/
+*.pem
+*.p12
+*.pfx
+*.key
+id_rsa
+id_ed25519
+credentials.json
+secrets.json
+
+# Environment-specific secrets (keep the documented template)
+.env.*
+!.env.example

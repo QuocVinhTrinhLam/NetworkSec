@@ -1,0 +1,6 @@
+STATUS: ACTUAL VPCS STARTUP CONFIG UNAVAILABLE
+Node: PC1
+Persisted on: GNS3 VM compute (not in the Windows project directory)
+Intended address supplied by project owner: 10.10.10.10/24
+Verification: not verified against a startup.vpc file or running console
+No startup command is provided because the gateway and runtime state were not verified.
