@@ -1,12 +1,20 @@
 from __future__ import annotations
 
 import csv
+import ctypes
 import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 from app.benchmark.charts import render_charts
-from app.benchmark.runner import BenchmarkConfig, _build_cisco_messages, run_benchmarks
+from app.benchmark.runner import (
+    BenchmarkConfig,
+    _build_cisco_messages,
+    _windows_rss_bytes,
+    run_benchmarks,
+)
 from app.parsers import parse_syslog
 from app.schemas.event import ParseStatus
 
@@ -69,3 +77,11 @@ def test_chart_renderer_rejects_unmeasured_rows(tmp_path: Path) -> None:
         assert "no completed" in str(exc)
     else:
         raise AssertionError("unmeasured data must not produce charts")
+
+
+def test_windows_rss_returns_zero_without_windows_api(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delattr(ctypes, "WinDLL", raising=False)
+
+    assert _windows_rss_bytes() == 0
