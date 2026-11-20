@@ -1,0 +1,17 @@
+schema_version: "1.0"
+rules:
+  - id: interface-link-state
+    enabled: true
+    event_family: link_state
+    event_types:
+      - link_up
+      - link_down
+    group_by:
+      - device_name
+      - interface_name
+      - event_family
+    required_fields:
+      - device_name
+      - interface_name
+    window_seconds: 60
+    notification_cooldown_seconds: 300

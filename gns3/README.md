@@ -1,14 +1,15 @@
 # GNS3 network lab
 
 This directory contains the version-controlled, non-sensitive representation of the
-`Network-Security-Monitoring-Lab` project. It complements the Mini-SIEM application in
+`Network-Security-Monitoring-Lab` project. It complements the Network Event Management application in
 the repository; it does not contain virtual disks or a complete device-state backup.
 
 ## Verified snapshot
 
 The snapshot was inspected on 2026-11-12 with GNS3 2.2.61. The source project is
 `D:\Network-Security-Monitoring-Lab\Network-Security-Monitoring-Lab.gns3` and uses the
-VMware compute named `GNS3 VM`. The topology JSON contains seven nodes and six links.
+VMware compute named `GNS3 VM`. The current topology JSON contains eight nodes and seven
+links after `webterm-1` was connected to Switch1 Ethernet4 on VLAN 10.
 
 Verified from the project metadata:
 
@@ -16,6 +17,7 @@ Verified from the project metadata:
 - pfSense adapter 1 connects to MikroTik adapter 0.
 - MikroTik adapter 1 connects to Switch1 Ethernet0.
 - Switch1 Ethernet1, Ethernet2, and Ethernet3 connect to PC1, PC2, and PC3.
+- Switch1 Ethernet4 connects to `webterm-1` as an access port in VLAN 10.
 - Ethernet0 is a `dot1q` port; Ethernet1/2/3 are access ports in VLAN 10/20/30.
 - MikroTik uses the `chr-7.24.6.img` appliance image.
 - pfSense uses `pfSense-Firewall-hda.qcow2`; the pfSense release is not present in the
@@ -38,7 +40,7 @@ It was not verified against the powered-off guests.
    checksums documented in `backup/BACKUP.md`.
 3. Open `topology/Network-Security-Monitoring-Lab.gns3` in GNS3.
 4. Resolve the VM compute and appliance-image prompts without changing node IDs.
-5. Confirm the seven-node/six-link topology and switch VLANs before starting devices.
+5. Confirm the eight-node/seven-link topology and switch VLANs before starting devices.
 6. Restore device configurations only from trusted exports. The repository does not
    contain an actual pfSense XML, RouterOS export, or VPCS startup export.
 7. Apply the intended IP plan only after comparing it with the restored device state.
@@ -52,5 +54,7 @@ offline backup. Never add that backup or its virtual disks to Git.
 - Supported live exports require the VM compute and guest nodes to be running; they were
   intentionally left powered off.
 - A complete restore rehearsal was not performed.
+- Switch1 is the unmanaged GNS3 built-in switch and cannot originate Syslog. See the
+  [Phase 7 review-only integration runbook](docs/phase7-syslog-integration.md).
 - The committed topology omits the MikroTik appliance help text because it mentioned
   factory-default credentials; this does not change node or link behavior.

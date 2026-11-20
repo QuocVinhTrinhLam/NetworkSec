@@ -1,0 +1,24 @@
+# REVIEW ONLY - not applied. Compare with: /export show-sensitive=no
+# Assumptions: ether1 is pfSense transit; ether2 is the VLAN trunk.
+
+# Add only missing VLAN interfaces and addresses after checking the live export.
+/interface vlan add interface=ether2 name=vlan10-test vlan-id=10
+/interface vlan add interface=ether2 name=vlan20-admin vlan-id=20
+/interface vlan add interface=ether2 name=vlan99-management vlan-id=99
+/ip address add address=10.10.10.1/24 interface=vlan10-test
+/ip address add address=10.10.20.1/24 interface=vlan20-admin
+/ip address add address=10.10.99.1/24 interface=vlan99-management
+
+# RouterOS Syslog format uses UDP. The collector is intentionally non-standard port 5514.
+/system logging action add name=networksec-remote target=remote remote=10.10.99.10 remote-port=5514 remote-protocol=udp remote-log-format=syslog syslog-time-format=iso8601 syslog-facility=local0 src-address=10.10.99.1
+
+# Mutually exclusive severity rules avoid forwarding one multi-topic record more than once.
+/system logging add action=networksec-remote topics=critical
+/system logging add action=networksec-remote topics=error,!critical
+/system logging add action=networksec-remote topics=warning,!error,!critical
+/system logging add action=networksec-remote topics=info,!warning,!error,!critical
+
+# Read-only verification after approval:
+# /system logging action print detail where name=networksec-remote
+# /system logging print detail where action=networksec-remote
+# /ping 10.10.99.10 src-address=10.10.99.1 count=4

@@ -5,17 +5,26 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
+.tox/
 .coverage
+.coverage.*
 htmlcov/
+coverage.xml
+build/
+dist/
+*.egg-info/
 docs/testing/e2e/evidence/
 data/
+runtime/
+logs/
+artifacts/
 *.db
 *.db-shm
 *.db-wal
 
 # Local AI agent configuration and machine-specific paths
 .agents/
-AGENTS.md
 
 # GNS3, QEMU, VMware, and offline backup artifacts
 *.vmdk
@@ -54,7 +63,10 @@ id_rsa
 id_ed25519
 credentials.json
 secrets.json
+*.secrets.yaml
+*.secrets.yml
 
 # Environment-specific secrets (keep the documented template)
 .env.*
 !.env.example
+AGENTS.md

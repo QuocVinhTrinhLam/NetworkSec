@@ -26,7 +26,6 @@ class AlertSource(StrEnum):
     """Supported alert producers."""
 
     MOCK = "mock"
-    WAZUH = "wazuh"
 
 
 class DeviceType(StrEnum):
@@ -205,9 +204,7 @@ class Alert(SchemaModel):
             "user": legacy.get("user"),
             "mitre": mitre,
             "event_count": legacy.get("count", legacy.get("event_count", 1)),
-            "status": legacy.get(
-                "status", "acknowledged" if acknowledged else "new"
-            ),
+            "status": legacy.get("status", "acknowledged" if acknowledged else "new"),
             "acknowledged_by": legacy.get("acknowledged_by"),
             "acknowledged_at": legacy.get("acknowledged_at"),
             "tags": legacy.get("tags", []),

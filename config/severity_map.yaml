@@ -1,8 +1,8 @@
 schema_version: "1.0"
 
-# Wazuh rule levels are explicitly mapped so analysts can tune severity
+# Numeric rule levels are explicitly mapped so analysts can tune severity
 # without changing application code.
-wazuh_level_to_severity:
+rule_level_to_severity:
   0: low
   1: low
   2: low

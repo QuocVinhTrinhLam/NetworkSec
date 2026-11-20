@@ -227,6 +227,32 @@
                     }
                 ],
                 "suspend": false
+            },
+            {
+                "filters": {},
+                "link_id": "bebdb2a9-9a33-46cc-bff0-9d14ec95ee37",
+                "link_style": {},
+                "nodes": [
+                    {
+                        "adapter_number": 0,
+                        "label": {
+                            "style": "font-family: TypeWriter;font-size: 10.0;font-weight: bold;fill: #000000;fill-opacity: 1.0;",
+                            "text": "0/4"
+                        },
+                        "node_id": "aa567c84-8b44-4535-a757-2c03563a25b8",
+                        "port_number": 4
+                    },
+                    {
+                        "adapter_number": 0,
+                        "label": {
+                            "style": "font-family: TypeWriter;font-size: 10.0;font-weight: bold;fill: #000000;fill-opacity: 1.0;",
+                            "text": "0/0"
+                        },
+                        "node_id": "c23022f7-5b29-4e44-ba17-be9e5bbe41b8",
+                        "port_number": 0
+                    }
+                ],
+                "suspend": false
             }
         ],
         "nodes": [
@@ -304,7 +330,7 @@
                 "compute_id": "vm",
                 "console": null,
                 "console_auto_start": false,
-                "console_type": null,
+                "console_type": "none",
                 "custom_adapters": [],
                 "first_port_name": null,
                 "height": 71,
@@ -340,7 +366,7 @@
             },
             {
                 "compute_id": "vm",
-                "console": 5000,
+                "console": 5002,
                 "console_auto_start": false,
                 "console_type": "telnet",
                 "custom_adapters": [],
@@ -433,8 +459,8 @@
                 "symbol": ":/symbols/vpcs_guest.svg",
                 "template_id": "19021f99-e36f-394d-b4a1-8aaa902ab9cc",
                 "width": 65,
-                "x": -194,
-                "y": 346,
+                "x": -250,
+                "y": 368,
                 "z": 1
             },
             {
@@ -462,8 +488,8 @@
                 "symbol": ":/symbols/vpcs_guest.svg",
                 "template_id": "19021f99-e36f-394d-b4a1-8aaa902ab9cc",
                 "width": 65,
-                "x": -54,
-                "y": 338,
+                "x": -136,
+                "y": 364,
                 "z": 1
             },
             {
@@ -491,13 +517,13 @@
                 "symbol": ":/symbols/vpcs_guest.svg",
                 "template_id": "19021f99-e36f-394d-b4a1-8aaa902ab9cc",
                 "width": 65,
-                "x": 67,
-                "y": 345,
+                "x": -13,
+                "y": 369,
                 "z": 1
             },
             {
                 "compute_id": "vm",
-                "console": 5004,
+                "console": 5010,
                 "console_auto_start": false,
                 "console_type": "none",
                 "custom_adapters": [],
@@ -550,7 +576,7 @@
                             "name": "Ethernet4",
                             "port_number": 4,
                             "type": "access",
-                            "vlan": 1
+                            "vlan": 10
                         },
                         {
                             "name": "Ethernet5",
@@ -578,11 +604,54 @@
                 "x": -63,
                 "y": 247,
                 "z": 1
+            },
+            {
+                "compute_id": "vm",
+                "console": 5901,
+                "console_auto_start": false,
+                "console_type": "vnc",
+                "custom_adapters": [],
+                "first_port_name": null,
+                "height": 70,
+                "label": {
+                    "rotation": 0,
+                    "style": "font-family: TypeWriter;font-size: 10.0;font-weight: bold;fill: #000000;fill-opacity: 1.0;",
+                    "text": "webterm-1",
+                    "x": -6,
+                    "y": -25
+                },
+                "locked": false,
+                "name": "webterm-1",
+                "node_id": "c23022f7-5b29-4e44-ba17-be9e5bbe41b8",
+                "node_type": "docker",
+                "port_name_format": "Ethernet{0}",
+                "port_segment_size": 0,
+                "properties": {
+                    "adapters": 1,
+                    "aux": 5011,
+                    "console_http_path": "/",
+                    "console_http_port": 80,
+                    "console_resolution": "1024x768",
+                    "container_id": "d3ce502cebe86680173a2a39454ed6b5eb1c5e0ed6899413e2cabe4e35231490",
+                    "environment": null,
+                    "extra_hosts": null,
+                    "extra_volumes": [],
+                    "image": "gns3/webterm:latest",
+                    "mac_address": "02:42:30:22:f7:00",
+                    "start_command": null,
+                    "usage": "The /root directory is persistent."
+                },
+                "symbol": "firefox.svg",
+                "template_id": "9e5ae9a0-cbe1-45e9-9576-6947ddf4ab48",
+                "width": 68,
+                "x": 90,
+                "y": 354,
+                "z": 1
             }
         ]
     },
     "type": "topology",
     "variables": null,
     "version": "2.2.61",
-    "zoom": 100
+    "zoom": 84
 }

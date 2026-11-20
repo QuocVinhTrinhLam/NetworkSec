@@ -1,0 +1,306 @@
+name: network-event-management
+
+x-common-environment: &common-environment
+  DATABASE_PATH: /app/data/monitor.db
+  JSON_LOGS: ${JSON_LOGS:-false}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  RAW_LOG_MAX_LENGTH: ${RAW_LOG_MAX_LENGTH:-4096}
+  RULES_CATALOG: /app/config/rules_catalog.yaml
+  SEVERITY_CONFIG: /app/config/severity_map.yaml
+
+x-common-service: &common-service
+  build:
+    context: .
+    dockerfile: docker/Dockerfile
+  image: network-event-management:local
+  init: true
+  read_only: true
+  restart: unless-stopped
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  tmpfs:
+    - /tmp:size=16m,mode=1777
+  volumes:
+    - monitor-data:/app/data
+  logging:
+    driver: json-file
+    options:
+      max-size: 5m
+      max-file: "2"
+
+services:
+  postgres:
+    image: postgres:17.12-bookworm
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-networksec}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+      POSTGRES_USER: ${POSTGRES_USER:-networksec}
+    restart: unless-stopped
+    ports:
+      - "${POSTGRES_BIND_HOST:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+    shm_size: 64mb
+    mem_limit: 384m
+
+  loki:
+    image: grafana/loki:3.7.0
+    command: ["-config.file=/etc/loki/loki.yaml", "-target=all"]
+    restart: unless-stopped
+    ports:
+      - "${LOKI_BIND_HOST:-127.0.0.1}:${LOKI_PORT:-3100}:3100"
+    volumes:
+      - ./infra/loki/loki.yaml:/etc/loki/loki.yaml:ro
+      - loki-data:/tmp/loki
+    healthcheck:
+      test: ["CMD", "/usr/bin/loki", "-config.file=/etc/loki/loki.yaml", "-verify-config=true"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    mem_limit: 384m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+  grafana:
+    image: grafana/grafana:13.3.0
+    environment:
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-}
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    restart: unless-stopped
+    ports:
+      - "${GRAFANA_BIND_HOST:-127.0.0.1}:${GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      loki:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    mem_limit: 256m
+
+  rsyslog:
+    image: rsyslog/rsyslog:2026-04@sha256:0c2960a55e1ee518d09385dbf06703a770e13cd064d46177256b7dad6374a2b2
+    entrypoint: ["/bin/sh", "/etc/networksec/entrypoint.sh"]
+    environment:
+      RSYSLOG_MAX_MESSAGE_KB: ${RSYSLOG_MAX_MESSAGE_KB:-32}
+      RSYSLOG_QUEUE_CHECKPOINT_INTERVAL: ${RSYSLOG_QUEUE_CHECKPOINT_INTERVAL:-100}
+      RSYSLOG_QUEUE_DISK_MB: ${RSYSLOG_QUEUE_DISK_MB:-256}
+      RSYSLOG_QUEUE_HIGH_WATERMARK: ${RSYSLOG_QUEUE_HIGH_WATERMARK:-8000}
+      RSYSLOG_QUEUE_LOW_WATERMARK: ${RSYSLOG_QUEUE_LOW_WATERMARK:-2000}
+      RSYSLOG_QUEUE_SIZE: ${RSYSLOG_QUEUE_SIZE:-10000}
+      RSYSLOG_QUEUE_WORKERS: ${RSYSLOG_QUEUE_WORKERS:-1}
+      RSYSLOG_RETRY_SECONDS: ${RSYSLOG_RETRY_SECONDS:-2}
+    restart: unless-stopped
+    user: "0:10001"
+    init: true
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:size=4m,mode=1777
+      - /run:size=4m,mode=0755
+    ports:
+      - "${SYSLOG_BIND_HOST:-127.0.0.1}:${SYSLOG_TCP_PORT:-5514}:5514/tcp"
+      - "${SYSLOG_BIND_HOST:-127.0.0.1}:${SYSLOG_UDP_PORT:-5514}:5514/udp"
+    volumes:
+      - ./infra/rsyslog/entrypoint.sh:/etc/networksec/entrypoint.sh:ro
+      - ./infra/rsyslog/rsyslog.conf.template:/etc/networksec/rsyslog.conf.template:ro
+      - syslog-queue:/var/spool/rsyslog
+      - syslog-raw:/var/log/networksec
+    healthcheck:
+      test: ["CMD", "rsyslogd", "-N1", "-f", "/tmp/rsyslog.conf"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    mem_limit: 128m
+
+  dashboard:
+    <<: *common-service
+    environment:
+      <<: *common-environment
+      ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:-}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      APP_ENV: production
+      APP_NAME: ${APP_NAME:-Network Event Management}
+      APP_URL: ${APP_URL:-http://localhost:8000}
+      BIND_HOST: ${BIND_HOST:-127.0.0.1}
+      DEVICE_SILENT_MINUTES: ${DEVICE_SILENT_MINUTES:-15}
+      MOCK_MODE: "true"
+      DASHBOARD_BACKEND: operational
+      LOKI_URL: http://loki:3100
+      LOKI_TIMEOUT_SECONDS: ${LOKI_TIMEOUT_SECONDS:-5}
+      POSTGRES_CONNECT_TIMEOUT_SECONDS: ${POSTGRES_CONNECT_TIMEOUT_SECONDS:-5}
+      POSTGRES_DSN: "host=postgres port=5432 dbname=${POSTGRES_DB:-networksec} user=${POSTGRES_USER:-networksec} password=${POSTGRES_PASSWORD:-}"
+      POSTGRES_MIGRATIONS_PATH: /app/migrations/postgresql
+      SESSION_HTTPS_ONLY: ${SESSION_HTTPS_ONLY:-false}
+      SESSION_SECRET: ${SESSION_SECRET:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${BIND_HOST:-127.0.0.1}:${DASHBOARD_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    mem_limit: 128m
+
+  processor:
+    <<: *common-service
+    command: ["python", "-m", "app.processor"]
+    environment:
+      <<: *common-environment
+      CORRELATION_DATABASE_PATH: /app/processor-state/correlation.db
+      CORRELATION_RULES_PATH: /app/config/correlation_rules.yaml
+      LOKI_URL: http://loki:3100
+      LOKI_TIMEOUT_SECONDS: ${LOKI_TIMEOUT_SECONDS:-5}
+      POSTGRES_CONNECT_TIMEOUT_SECONDS: ${POSTGRES_CONNECT_TIMEOUT_SECONDS:-5}
+      POSTGRES_DSN: "host=postgres port=5432 dbname=${POSTGRES_DB:-networksec} user=${POSTGRES_USER:-networksec} password=${POSTGRES_PASSWORD:-}"
+      POSTGRES_MIGRATIONS_PATH: /app/migrations/postgresql
+      PROCESSOR_HEALTH_MAX_AGE_SECONDS: ${PROCESSOR_HEALTH_MAX_AGE_SECONDS:-30}
+      PROCESSOR_POLL_INTERVAL_SECONDS: ${PROCESSOR_POLL_INTERVAL_SECONDS:-0.25}
+      PROCESSOR_RETRY_INTERVAL_SECONDS: ${PROCESSOR_RETRY_INTERVAL_SECONDS:-2}
+      PROCESSOR_SOURCE_TIMEZONE: ${PROCESSOR_SOURCE_TIMEZONE:-UTC}
+      PROCESSOR_SPOOL_PATH: /var/log/networksec/processor.jsonl
+      PROCESSOR_STATE_PATH: /app/processor-state/processor-state.db
+    depends_on:
+      loki:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      rsyslog:
+        condition: service_healthy
+    volumes:
+      - processor-state:/app/processor-state
+      - syslog-raw:/var/log/networksec:ro
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.processor.healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    mem_limit: 256m
+    cpus: 0.75
+    pids_limit: 128
+
+  bot:
+    <<: *common-service
+    profiles: ["notifications"]
+    command: ["python", "-m", "app.bot"]
+    environment:
+      <<: *common-environment
+      ALLOWED_CHAT_IDS: ${ALLOWED_CHAT_IDS:-}
+      DEDUP_WINDOW_SECONDS: ${DEDUP_WINDOW_SECONDS:-60}
+      MAX_MESSAGES_PER_MINUTE: ${MAX_MESSAGES_PER_MINUTE:-20}
+      NOTIFICATION_INTERVAL_SECONDS: ${NOTIFICATION_INTERVAL_SECONDS:-2}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_MIN_SEVERITY: ${TELEGRAM_MIN_SEVERITY:-medium}
+      TELEGRAM_RATE_WINDOW_SECONDS: ${TELEGRAM_RATE_WINDOW_SECONDS:-60}
+      TELEGRAM_TIMEZONE: ${TELEGRAM_TIMEZONE:-Asia/Ho_Chi_Minh}
+      POSTGRES_CONNECT_TIMEOUT_SECONDS: ${POSTGRES_CONNECT_TIMEOUT_SECONDS:-5}
+      POSTGRES_DSN: "host=postgres port=5432 dbname=${POSTGRES_DB:-networksec} user=${POSTGRES_USER:-networksec} password=${POSTGRES_PASSWORD:-}"
+      POSTGRES_MIGRATIONS_PATH: /app/migrations/postgresql
+    depends_on:
+      dashboard:
+        condition: service_healthy
+      processor:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "from pathlib import Path; assert Path('/tmp/bot.ready').exists()"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    mem_limit: 128m
+
+  mock:
+    <<: *common-service
+    profiles: ["mock"]
+    restart: "no"
+    command:
+      - python
+      - -m
+      - app.mock
+      - --scenario
+      - ${SCENARIO_NAME:-ssh_bruteforce}
+      - --duration
+      - ${SCENARIO_DURATION:-60}
+      - --rate
+      - ${MOCK_RATE_PER_SECOND:-0}
+    environment:
+      <<: *common-environment
+      MOCK_FIXTURE_PATH: /app/fixtures/alerts.json
+      MOCK_SEVERITY_DISTRIBUTION: ${MOCK_SEVERITY_DISTRIBUTION:-low=40,medium=35,high=20,critical=5}
+    depends_on:
+      dashboard:
+        condition: service_healthy
+    mem_limit: 64m
+
+  syslog-generator:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: network-event-management:local
+    profiles: ["syslog-tools"]
+    command:
+      - python
+      - -m
+      - app.syslog_generator
+      - --protocol
+      - ${SYSLOG_PROTOCOL:-tcp}
+      - --rate
+      - ${SYSLOG_EVENT_RATE:-10}
+      - --count
+      - ${SYSLOG_EVENT_COUNT:-100}
+    environment:
+      SYSLOG_RETRY_DELAY_SECONDS: ${SYSLOG_RETRY_DELAY_SECONDS:-0.5}
+      SYSLOG_SEND_RETRIES: ${SYSLOG_SEND_RETRIES:-3}
+      SYSLOG_TARGET_HOST: rsyslog
+      SYSLOG_TARGET_PORT: 5514
+    init: true
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:size=8m,mode=1777
+    depends_on:
+      rsyslog:
+        condition: service_healthy
+    restart: "no"
+    mem_limit: 64m
+
+volumes:
+  grafana-data:
+  loki-data:
+  monitor-data:
+  postgres-data:
+  processor-state:
+  syslog-queue:
+  syslog-raw:

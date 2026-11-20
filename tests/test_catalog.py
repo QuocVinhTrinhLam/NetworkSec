@@ -7,7 +7,7 @@ from app.services.catalog import RulesCatalog, SeverityMapper
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def test_explicit_severity_map_covers_wazuh_levels() -> None:
+def test_explicit_severity_map_covers_rule_levels() -> None:
     mapper = SeverityMapper.from_file(ROOT / "config" / "severity_map.yaml")
 
     assert [mapper.map(level) for level in range(16)] == [
@@ -35,7 +35,7 @@ def test_explicit_severity_map_covers_wazuh_levels() -> None:
 
 def test_severity_map_rejects_missing_levels(tmp_path: Path) -> None:
     incomplete = tmp_path / "severity_map.yaml"
-    incomplete.write_text("wazuh_level_to_severity:\n  0: low\n", encoding="utf-8")
+    incomplete.write_text("rule_level_to_severity:\n  0: low\n", encoding="utf-8")
 
     with pytest.raises(ValueError, match="levels 0 through 15"):
         SeverityMapper.from_file(incomplete)

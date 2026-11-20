@@ -7,9 +7,11 @@
 | 10 | Switch1 Ethernet1 | PC1 | Verified |
 | 20 | Switch1 Ethernet2 | PC2 | Verified |
 | 30 | Switch1 Ethernet3 | PC3 | Verified |
+| 10 | Switch1 Ethernet4 | webterm-1 | Verified |
 
 Switch1 Ethernet0 is persisted as a GNS3 `dot1q` port with VLAN value 1 and connects to
-MikroTik adapter 1. Ethernet4 through Ethernet7 are unused access ports in VLAN 1.
+MikroTik adapter 1. Ethernet4 is now a connected VLAN 10 access port; Ethernet5 through
+Ethernet7 remain unused access ports in VLAN 1.
 
 ## Intended layer-3 design
 

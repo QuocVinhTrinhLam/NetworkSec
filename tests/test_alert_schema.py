@@ -76,14 +76,11 @@ def test_alert_id_is_deterministic_with_one_second_timestamp_bucket() -> None:
         alert_data(timestamp="2026-11-02T14:03:11.999+07:00", alert_id="caller-value")
     )
     next_bucket = Alert.model_validate(alert_data(timestamp="2026-11-02T07:03:12Z"))
-    different_source = Alert.model_validate(alert_data(source="wazuh"))
 
     assert first.alert_id == same_bucket.alert_id
     assert first.alert_id != "caller-value"
     assert first.alert_id != next_bucket.alert_id
-    assert first.alert_id != different_source.alert_id
     assert first.dedup_key == next_bucket.dedup_key
-    assert first.dedup_key == different_source.dedup_key
 
 
 def test_raw_log_uses_default_and_context_specific_limits() -> None:

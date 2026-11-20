@@ -6,7 +6,7 @@ from app.services.normalizer import normalize_alert
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def test_normalizes_wazuh_alert_and_matches_catalog() -> None:
+def test_normalizes_source_alert_and_matches_catalog() -> None:
     mapper = SeverityMapper.from_file(ROOT / "config" / "severity.yaml")
     catalog = RulesCatalog.from_file(ROOT / "config" / "rules_catalog.yaml")
     document = {

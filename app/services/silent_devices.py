@@ -30,14 +30,9 @@ class SilentDeviceWatcher:
             last_seen = str(device["last_seen"])
             if self.database.get_state(state_key) == last_seen:
                 continue
-            source = (
-                AlertSource.WAZUH
-                if self.settings.alert_source == AlertSource.WAZUH.value
-                else AlertSource.MOCK
-            )
             alert = Alert(
                 timestamp=datetime.now(UTC),
-                source=source,
+                source=AlertSource.MOCK,
                 device=Device(
                     name=str(device["device_name"]),
                     type=str(device["device_type"]),

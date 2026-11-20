@@ -61,3 +61,20 @@ def require_user(request: Request) -> str:
             detail="Authentication required",
         )
     return str(user)
+
+
+def require_api_user(request: Request) -> str:
+    """Require the existing session but return API-appropriate status semantics."""
+    user: Any = request.session.get("user")
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            headers={"WWW-Authenticate": "Session"},
+            detail="Authentication required",
+        )
+    return str(user)
+
+
+def require_api_csrf(request: Request) -> None:
+    """Protect session-authenticated JSON mutations from cross-site requests."""
+    validate_csrf(request, request.headers.get("X-CSRF-Token", ""))

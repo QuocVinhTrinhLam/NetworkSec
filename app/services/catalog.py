@@ -10,7 +10,7 @@ from typing import Any
 import yaml
 
 SEVERITY_ORDER = {"low": 0, "medium": 1, "high": 2, "critical": 3}
-WAZUH_LEVELS = range(16)
+RULE_LEVELS = range(16)
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -31,26 +31,26 @@ def _string_tuple(value: Any) -> tuple[str, ...]:
 
 @dataclass(frozen=True, slots=True)
 class SeverityMapper:
-    """Map every standard Wazuh rule level to a named severity."""
+    """Map every supported numeric rule level to a named severity."""
 
     levels: tuple[str, ...]
 
     @classmethod
     def from_file(cls, path: Path) -> SeverityMapper:
         document = _load_yaml(path)
-        explicit = document.get("wazuh_level_to_severity")
+        explicit = document.get("rule_level_to_severity")
         if explicit is not None:
             if not isinstance(explicit, dict):
-                raise ValueError("wazuh_level_to_severity must be a mapping")
+                raise ValueError("rule_level_to_severity must be a mapping")
             level_map = {int(level): str(severity) for level, severity in explicit.items()}
-            missing = set(WAZUH_LEVELS).difference(level_map)
-            extra = set(level_map).difference(WAZUH_LEVELS)
+            missing = set(RULE_LEVELS).difference(level_map)
+            extra = set(level_map).difference(RULE_LEVELS)
             if missing or extra:
-                raise ValueError("severity map must define exactly Wazuh levels 0 through 15")
+                raise ValueError("severity map must define exactly rule levels 0 through 15")
             invalid = set(level_map.values()).difference(SEVERITY_ORDER)
             if invalid:
                 raise ValueError(f"Unknown severities: {', '.join(sorted(invalid))}")
-            return cls(tuple(level_map[level] for level in WAZUH_LEVELS))
+            return cls(tuple(level_map[level] for level in RULE_LEVELS))
 
         # Backward compatibility for the original range-based severity.yaml.
         ranges = document.get("severity", {})
@@ -63,11 +63,11 @@ class SeverityMapper:
             lower, upper = int(bounds["min"]), int(bounds["max"])
             for level in range(lower, upper + 1):
                 if level in legacy_level_map:
-                    raise ValueError(f"Wazuh level {level} is mapped more than once")
+                    raise ValueError(f"Rule level {level} is mapped more than once")
                 legacy_level_map[level] = str(severity)
-        if set(legacy_level_map) != set(WAZUH_LEVELS):
-            raise ValueError("severity ranges must cover exactly Wazuh levels 0 through 15")
-        return cls(tuple(legacy_level_map[level] for level in WAZUH_LEVELS))
+        if set(legacy_level_map) != set(RULE_LEVELS):
+            raise ValueError("severity ranges must cover exactly rule levels 0 through 15")
+        return cls(tuple(legacy_level_map[level] for level in RULE_LEVELS))
 
     @property
     def ranges(self) -> dict[str, tuple[int, int]]:
@@ -204,7 +204,7 @@ class RulesCatalog:
         return next((entry for entry in self.entries if entry.id == catalog_id), None)
 
     def match(self, rule_id: str, groups: list[str]) -> RuleCatalogEntry | None:
-        # An explicit rule ID is more precise than a possibly shared Wazuh group.
+        # An explicit rule ID is more precise than a possibly shared rule group.
         explicit = next((entry for entry in self.entries if rule_id in entry.rule_ids), None)
         if explicit:
             return explicit

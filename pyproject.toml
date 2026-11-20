@@ -1,29 +1,52 @@
 [project]
-name = "network-security-monitor"
+name = "network-event-management"
 version = "0.1.0"
-description = "Lightweight Wazuh alert dashboard and Telegram bot"
-requires-python = ">=3.11"
+description = "Lightweight network event management platform"
+readme = "README.md"
+requires-python = ">=3.12"
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py312"
+extend-exclude = ["app/static/*.min.js", "docs/testing/e2e/evidence"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
 
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
+addopts = "-q --strict-config --strict-markers"
 pythonpath = ["."]
+markers = [
+    "e2e: browser-based end-to-end tests that require Playwright browsers",
+    "syslog_integration: requires Docker Compose and the rsyslog service",
+    "storage_integration: requires Docker Compose with Loki and PostgreSQL",
+    "processor_integration: requires the complete Docker Compose processing pipeline",
+]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 plugins = ["pydantic.mypy"]
+files = ["app"]
 check_untyped_defs = true
 disallow_untyped_defs = true
+no_implicit_optional = true
 warn_redundant_casts = true
 warn_unused_ignores = true
 exclude = ["tests/test_e2e_playwright.py"]
+
+[tool.coverage.run]
+branch = true
+source = ["app"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
 
 [[tool.mypy.overrides]]
 module = ["yaml"]

@@ -118,7 +118,7 @@ def test_device_becomes_silent(tmp_path: Path) -> None:
         assert "not that the device is offline" in page.text
 
 
-def test_dashboard_renders_soc_command_center_and_live_queue(tmp_path: Path) -> None:
+def test_dashboard_renders_network_event_dashboard_and_live_queue(tmp_path: Path) -> None:
     with build_client(tmp_path) as client:
         critical_alert = Alert(
             id="live-critical-alert",
@@ -127,7 +127,7 @@ def test_dashboard_renders_soc_command_center_and_live_queue(tmp_path: Path) -> 
             device_type="firewall",
             source_ip="198.51.100.23",
             dest_ip="10.0.0.10",
-            user="soc-analyst",
+            user="network-analyst",
             rule_id="100900",
             rule_description='Suspicious </script><script>alert("owned")</script> access',
             severity="critical",
@@ -141,7 +141,7 @@ def test_dashboard_renders_soc_command_center_and_live_queue(tmp_path: Path) -> 
         page = client.get("/dashboard")
 
         assert page.status_code == 200
-        assert "SOC Command Center" in page.text
+        assert "Network Event Dashboard" in page.text
         assert 'aria-label="Primary navigation"' in page.text
         assert 'aria-current="page"' in page.text
         assert "Recent detections" in page.text
@@ -177,12 +177,12 @@ def test_attack_scenario_requires_csrf_and_exports_csv(tmp_path: Path) -> None:
         assert "Network Service Scanning" in exported.text
 
 
-def test_soc_command_center_refresh_and_kpi_grid_layout(tmp_path: Path) -> None:
-    """Xác minh tính toàn vẹn của chu trình làm mới dữ liệu và layout trên SOC Command Center.
+def test_network_event_dashboard_refresh_and_kpi_grid_layout(tmp_path: Path) -> None:
+    """Xác minh tính toàn vẹn của chu trình làm mới dữ liệu và layout dashboard.
 
     Kịch bản kiểm thử đảm bảo giao diện giám sát viễn thông hoạt động ổn định khi nhận dữ liệu
     bổ sung thời gian thực qua cơ chế HTMX partial, ngăn chặn các lỗi hiển thị phổ biến trong
-    hệ thống SOC (như số liệu NaN/undefined làm vỡ biểu đồ Chart.js, mất liên kết DOM hoặc
+    hệ thống giám sát (như số liệu NaN/undefined làm vỡ biểu đồ Chart.js, mất liên kết DOM hoặc
     vỡ layout grid hiển thị trên màn hình điều hành NOC).
 
     Args:
@@ -200,20 +200,20 @@ def test_soc_command_center_refresh_and_kpi_grid_layout(tmp_path: Path) -> None:
         # Khởi tạo bản ghi cảnh báo ban đầu trong khung thời gian 24h
         # để thiết lập baseline cho các thẻ KPI
         refreshed_alert = Alert(
-                id="initial-soc-alert-01",
-                timestamp=datetime.now(UTC).isoformat(timespec="seconds"),
-                device_name="edge-fw-01",
-                device_type="firewall",
-                source_ip="198.51.100.10",
-                dest_ip="10.0.0.1",
-                user="soc-analyst",
-                rule_id="100200",
-                rule_description="Perimeter port scan detected",
-                severity="high",
-                mitre_id="T1046",
-                mitre_name="Network Service Scanning",
-                raw_log="initial perimeter log",
-            )
+            id="initial-network-alert-01",
+            timestamp=datetime.now(UTC).isoformat(timespec="seconds"),
+            device_name="edge-fw-01",
+            device_type="firewall",
+            source_ip="198.51.100.10",
+            dest_ip="10.0.0.1",
+            user="network-analyst",
+            rule_id="100200",
+            rule_description="Perimeter port scan detected",
+            severity="high",
+            mitre_id="T1046",
+            mitre_name="Network Service Scanning",
+            raw_log="initial perimeter log",
+        )
         client.app.state.database.insert_alert(refreshed_alert)
 
         # Trích xuất CSRF token từ trang /login để mô phỏng chính xác luồng xác thực;
@@ -235,10 +235,10 @@ def test_soc_command_center_refresh_and_kpi_grid_layout(tmp_path: Path) -> None:
         assert login_resp.status_code == 303
         assert login_resp.headers.get("location") == "/dashboard"
 
-        # Xác nhận sau khi đăng nhập thành công, trình duyệt chuyển hướng tới SOC Command Center
+        # Xác nhận sau khi đăng nhập thành công, trình duyệt chuyển hướng tới dashboard
         dashboard_resp = client.get("/dashboard")
         assert dashboard_resp.status_code == 200
-        assert "SOC Command Center" in dashboard_resp.text
+        assert "Network Event Dashboard" in dashboard_resp.text
         assert 'id="dashboard-content"' in dashboard_resp.text
 
         # Kiểm tra sự hiện diện của các thành phần hiển thị cốt lõi trước khi làm mới:
@@ -261,19 +261,19 @@ def test_soc_command_center_refresh_and_kpi_grid_layout(tmp_path: Path) -> None:
         # Mô phỏng nút .refresh-button bằng cách chèn sự cố mới và yêu cầu /partials/dashboard;
         # Sử dụng HTMX partial thay vì full reload nhằm tiết kiệm băng thông mạng truyền dẫn.
         refreshed_alert = Alert(
-            id="refreshed-soc-alert-02",
+            id="refreshed-network-alert-02",
             timestamp=datetime.now(UTC).isoformat(timespec="seconds"),
-            device_name="soc-core-gw-01",
+            device_name="network-core-gw-01",
             device_type="firewall",
             source_ip="198.51.100.99",
             dest_ip="10.0.0.1",
-            user="soc-admin",
+            user="network-admin",
             rule_id="100999",
             rule_description="Critical lateral privilege escalation",
             severity="critical",
             mitre_id="T1078",
             mitre_name="Valid Accounts",
-            raw_log="soc refresh test log",
+            raw_log="network event refresh test log",
         )
         client.app.state.database.insert_alert(refreshed_alert)
 
@@ -285,7 +285,7 @@ def test_soc_command_center_refresh_and_kpi_grid_layout(tmp_path: Path) -> None:
 
         content_html = refresh_resp.text
         assert refreshed_alert.alert_id in content_html
-        assert "soc-core-gw-01" in content_html
+        assert "network-core-gw-01" in content_html
         assert '<div class="metric-grid">' in content_html
         assert "metric-total" in content_html
         assert "severity-critical" in content_html

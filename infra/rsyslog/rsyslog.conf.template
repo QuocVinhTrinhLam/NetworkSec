@@ -1,0 +1,82 @@
+global(
+    workDirectory="/var/spool/rsyslog"
+    maxMessageSize="@@MAX_MESSAGE_KB@@k"
+    processInternalMessages="on"
+)
+
+module(load="imtcp")
+module(load="imudp")
+
+template(name="NetworkSecRawMessage" type="list") {
+    property(name="rawmsg")
+    constant(value="\n")
+}
+
+template(name="NetworkSecProcessorEnvelope" type="list" option.jsonf="on") {
+    constant(value="1.0" outname="schema_version" format="jsonf")
+    property(name="timegenerated" dateFormat="rfc3339" outname="received_at" format="jsonf")
+    property(name="hostname" outname="source_host" format="jsonf")
+    property(name="fromhost-ip" outname="source_ip" format="jsonf")
+    property(name="rawmsg" outname="raw_message" format="jsonf")
+    property(name="rawmsg-after-pri" outname="parse_message" format="jsonf")
+}
+
+ruleset(name="networksec_ingest") {
+    action(
+        name="write_raw_spool"
+        type="omfile"
+        file="/var/log/networksec/raw.log"
+        template="NetworkSecRawMessage"
+        createDirs="on"
+        dirCreateMode="0750"
+        dirGroupNum="10001"
+        fileCreateMode="0640"
+        fileGroupNum="10001"
+        flushOnTXEnd="on"
+        action.reportSuspension="on"
+        action.reportSuspensionContinuation="on"
+        action.resumeRetryCount="-1"
+        action.resumeInterval="@@RETRY_SECONDS@@"
+        queue.type="LinkedList"
+        queue.filename="networksec_raw"
+        queue.size="@@QUEUE_SIZE@@"
+        queue.highWatermark="@@HIGH_WATERMARK@@"
+        queue.lowWatermark="@@LOW_WATERMARK@@"
+        queue.maxDiskSpace="@@QUEUE_DISK_MB@@m"
+        queue.workerThreads="@@QUEUE_WORKERS@@"
+        queue.checkpointInterval="@@CHECKPOINT_INTERVAL@@"
+        queue.saveOnShutdown="on"
+        queue.syncQueueFiles="on"
+    )
+    action(
+        name="write_processor_spool"
+        type="omfile"
+        file="/var/log/networksec/processor.jsonl"
+        template="NetworkSecProcessorEnvelope"
+        addLF="on"
+        createDirs="on"
+        dirCreateMode="0750"
+        dirGroupNum="10001"
+        fileCreateMode="0640"
+        fileGroupNum="10001"
+        flushOnTXEnd="on"
+        action.reportSuspension="on"
+        action.reportSuspensionContinuation="on"
+        action.resumeRetryCount="-1"
+        action.resumeInterval="@@RETRY_SECONDS@@"
+        queue.type="LinkedList"
+        queue.filename="networksec_processor"
+        queue.size="@@QUEUE_SIZE@@"
+        queue.highWatermark="@@HIGH_WATERMARK@@"
+        queue.lowWatermark="@@LOW_WATERMARK@@"
+        queue.maxDiskSpace="@@QUEUE_DISK_MB@@m"
+        queue.workerThreads="@@QUEUE_WORKERS@@"
+        queue.checkpointInterval="@@CHECKPOINT_INTERVAL@@"
+        queue.saveOnShutdown="on"
+        queue.syncQueueFiles="on"
+    )
+    stop
+}
+
+input(type="imtcp" port="5514" ruleset="networksec_ingest")
+input(type="imudp" port="5514" ruleset="networksec_ingest" rateLimit.interval="0")

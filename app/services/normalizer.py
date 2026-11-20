@@ -1,4 +1,4 @@
-"""Normalize untrusted Wazuh documents into one predictable schema."""
+"""Normalize untrusted alert documents into one predictable schema."""
 
 from __future__ import annotations
 
@@ -111,10 +111,10 @@ def normalize_alert(
     rules_catalog: RulesCatalog,
     external_id: str | None = None,
     *,
-    source: AlertSource | str = AlertSource.WAZUH,
+    source: AlertSource | str = AlertSource.MOCK,
     raw_log_max_length: int = 4096,
 ) -> Alert:
-    """Convert one Wazuh/OpenSearch document into an internal Alert.
+    """Convert one source document into an internal Alert.
 
     Raw fields remain plain data. Templates and Telegram formatters escape them at
     the output boundary because log content can be controlled by an attacker.

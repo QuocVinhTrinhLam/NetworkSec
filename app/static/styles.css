@@ -477,6 +477,13 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--bg-deep)
 .state-pill > span { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .state-new { color: var(--accent); background: rgba(60, 200, 255, .06); border-color: rgba(60, 200, 255, .25); }
 .state-acknowledged { color: var(--ok); background: rgba(61, 220, 151, .06); border-color: rgba(61, 220, 151, .22); }
+.state-resolved { color: var(--muted); background: rgba(137, 154, 170, .07); border-color: rgba(137, 154, 170, .22); }
+.event-filter-grid { grid-template-columns: minmax(220px, 1fr) 160px 160px 220px auto; }
+.recent-event-list li { grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; }
+.recent-event-list li > span:nth-child(2) { display: grid; gap: .2rem; }
+.recent-event-list small { color: var(--subtle); font-size: .66rem; }
+.recent-event-list time { color: var(--subtle); font: .68rem/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.event-table { min-width: 900px; }
 .row-action { text-align: right; }
 .row-action > span { display: inline-flex; align-items: center; gap: .35rem; min-height: 44px; color: var(--muted); font-size: .72rem; font-weight: 650; white-space: nowrap; }
 .alert-table-row:focus-within { background: var(--panel-hover); box-shadow: inset 0 0 0 1px var(--line-strong); }

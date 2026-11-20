@@ -1,8 +1,8 @@
-"""End-to-End (E2E) UI Automation Test Suite for NetworkSec SOC Command Center.
+"""End-to-End UI automation for the Network Event Management dashboard.
 
 Sử dụng Playwright để kiểm thử giao diện người dùng thực tế trên trình duyệt Chromium:
 - Xác thực đăng nhập (Login Authentication & CSRF Protection)
-- Giám sát KPI và biểu đồ viễn thông (SOC Command Center Telemetry)
+- Giám sát KPI và biểu đồ sự kiện mạng
 - Làm mới dữ liệu thời gian thực thông qua HTMX (Partial Swapping)
 - Quản lý kịch bản tấn công và xuất báo cáo CSV (Attack Scenarios & Export)
 
@@ -31,6 +31,8 @@ from app.db import Database
 from app.main import create_app
 from app.models import Alert
 from app.web.auth import hash_password
+
+pytestmark = pytest.mark.e2e
 
 # Thư mục bằng chứng nằm trong workspace để test chạy được trong sandbox và CI.
 EVIDENCE_DIR: Path = (BASE_DIR / "docs" / "testing" / "e2e" / "evidence").resolve()
@@ -100,7 +102,7 @@ def live_server(tmp_path_factory: pytest.TempPathFactory) -> Generator[LiveTestS
         LiveTestServer: Đối tượng máy chủ test sẵn sàng kết nối.
     """
     tmp_path = tmp_path_factory.mktemp("playwright_e2e")
-    db_path = tmp_path / "playwright_soc.db"
+    db_path = tmp_path / "playwright_network_events.db"
 
     # Lấy cổng khả dụng ngẫu nhiên trên localhost nhằm tránh xung đột với cổng 8000
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -121,7 +123,7 @@ def live_server(tmp_path_factory: pytest.TempPathFactory) -> Generator[LiveTestS
     app = create_app(settings)
     database = Database(db_path)
 
-    # Nạp sẵn 2 cảnh báo nền để SOC Dashboard hiển thị KPI và biểu đồ ban đầu
+    # Nạp sẵn 2 cảnh báo nền để dashboard hiển thị KPI và biểu đồ ban đầu
     database.insert_alert(
         Alert(
             id="seed-alert-core-01",
@@ -220,13 +222,11 @@ def test_tc_auth_01_login_and_csrf_validation(live_server: LiveTestServer, page:
 
     # Đảm bảo chuyển hướng tới /dashboard và thanh điều hướng xuất hiện
     page.wait_for_url(f"{live_server.url}/dashboard")
-    expect(page.locator("h1")).to_have_text("SOC Command Center")
+    expect(page.locator("h1")).to_have_text("Network Event Dashboard")
     capture_evidence(page, "TC-AUTH-01", 3, "login-success-dashboard", passed=True)
 
 
-def test_tc_dash_01_soc_command_center_telemetry_grid(
-    live_server: LiveTestServer, page: Page
-) -> None:
+def test_tc_dash_01_network_event_telemetry_grid(live_server: LiveTestServer, page: Page) -> None:
     """TC-DASH-01: Kiểm tra cấu trúc lưới KPI và các biểu đồ phân tích sự cố.
 
     Kiểm tra:
@@ -257,7 +257,7 @@ def test_tc_dash_01_soc_command_center_telemetry_grid(
     expect(page.locator(".alert-feed")).to_be_visible()
     expect(page.locator(".alert-feed")).to_contain_text("vnpt-core-router-01")
 
-    capture_evidence(page, "TC-DASH-01", 1, "soc-command-center-overview", passed=True)
+    capture_evidence(page, "TC-DASH-01", 1, "network-event-dashboard", passed=True)
 
 
 def test_tc_dash_02_htmx_realtime_telemetry_refresh(
@@ -305,9 +305,7 @@ def test_tc_dash_02_htmx_realtime_telemetry_refresh(
     refresh_button.click()
 
     # Chờ HTMX hoàn tất quá trình cập nhật innerHTML của #dashboard-content
-    expect(page.locator("#dashboard-content")).to_contain_text(
-        "vnpt-agg-switch-05", timeout=10_000
-    )
+    expect(page.locator("#dashboard-content")).to_contain_text("vnpt-agg-switch-05", timeout=10_000)
     expect(page.locator("#dashboard-content")).to_contain_text("Unauthorized Spanning-Tree")
 
     capture_evidence(page, "TC-DASH-02", 1, "htmx-telemetry-refreshed", passed=True)
@@ -375,9 +373,7 @@ def test_tc_scen_01_attack_scenarios_management_and_export(
     capture_evidence(page, "TC-SCEN-01", 4, "scenario-exported-csv", passed=True)
 
 
-def test_tc_dash_03_chart_layout_and_24h_timeline(
-    live_server: LiveTestServer, page: Page
-) -> None:
+def test_tc_dash_03_chart_layout_and_24h_timeline(live_server: LiveTestServer, page: Page) -> None:
     """TC-DASH-03: Kiểm tra hiển thị biểu đồ Donut, Timeline 24h và Refresh không biến mất.
 
     Kiểm tra:

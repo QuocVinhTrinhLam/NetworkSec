@@ -25,7 +25,7 @@ can still be summarized.
 | `alert_id` | string | Derived; caller values are ignored |
 | `timestamp` | UTC datetime | Event time; timezone is required |
 | `received_at` | UTC datetime | Ingestion time |
-| `source` | `mock` or `wazuh` | Adapter source |
+| `source` | `mock` | Legacy demonstration adapter source |
 | `device` | object | Name, type, optional vendor and validated IP |
 | `severity` | enum | Low, medium, high, or critical |
 | `rule` | object | Rule ID, description, level, groups, catalog link |

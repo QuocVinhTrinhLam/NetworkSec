@@ -1,0 +1,71 @@
+! REVIEW ONLY - not applied. Verify actual interface names with show interfaces status.
+hostname SW1-IOSVL2
+
+vlan 10
+ name TEST
+vlan 20
+ name ADMIN
+vlan 99
+ name MANAGEMENT
+
+interface GigabitEthernet0/0
+ description TRUNK_TO_R1_ETHER2
+ switchport trunk allowed vlan 10,20,99
+ switchport mode trunk
+ no shutdown
+
+interface GigabitEthernet0/1
+ description TEST_HOST_PC1
+ switchport mode access
+ switchport access vlan 10
+ spanning-tree portfast
+ no shutdown
+
+interface GigabitEthernet0/2
+ description ADMIN_HOST_WEBTERM
+ switchport mode access
+ switchport access vlan 20
+ spanning-tree portfast
+ no shutdown
+
+interface GigabitEthernet0/3
+ description UBUNTU_COLLECTOR_CLOUD
+ switchport mode access
+ switchport access vlan 99
+ spanning-tree portfast
+ no shutdown
+
+interface GigabitEthernet0/4
+ description PHASE7_EVENT_TEST_ONLY
+ switchport mode access
+ switchport access vlan 10
+ spanning-tree portfast
+ logging event link-status
+ shutdown
+
+interface Vlan99
+ description MANAGEMENT
+ ip address 10.10.99.2 255.255.255.0
+ no shutdown
+
+ip default-gateway 10.10.99.1
+service timestamps log datetime msec localtime show-timezone
+logging on
+logging facility local7
+logging trap informational
+logging source-interface Vlan99
+logging host 10.10.99.10 transport udp port 5514
+
+archive
+ log config
+  logging enable
+  logging size 200
+  hidekeys
+  notify syslog
+
+! Read-only verification after approval:
+! show vlan brief
+! show interfaces trunk
+! show ip interface brief
+! show logging
+! show archive log config statistics

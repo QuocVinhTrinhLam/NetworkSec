@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}SOC Command Center · {{ app_name }}{% endblock %}
+{% block title %}Network Event Dashboard · {{ app_name }}{% endblock %}
 {% block head_scripts %}
 <script defer src="{{ url_for('static', path='/htmx.min.js') }}"></script>
 <script defer src="{{ url_for('static', path='/chart.umd.min.js') }}"></script>
@@ -9,7 +9,7 @@
 <div class="page-heading dashboard-heading">
   <div>
     <p class="eyebrow">Security operations / overview</p>
-    <h1>SOC Command Center</h1>
+    <h1>Network Event Dashboard</h1>
     <p class="muted">Monitor, triage and investigate network threats from one operational view.</p>
   </div>
   <div class="heading-actions">

@@ -298,7 +298,7 @@
   };
 
   /**
-   * Cập nhật nhãn thời gian làm mới gần nhất trên thanh tiêu đề SOC Command Center.
+   * Cập nhật nhãn thời gian làm mới gần nhất trên Network Event Dashboard.
    *
    * @returns {void}
    */

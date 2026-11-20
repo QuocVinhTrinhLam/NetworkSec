@@ -1,0 +1,55 @@
+{
+  "annotations": {"list": []},
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {"type": "loki", "uid": "network-events-loki"},
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 20}, {"color": "red", "value": 50}]}}, "overrides": []},
+      "gridPos": {"h": 5, "w": 6, "x": 0, "y": 0},
+      "id": 1,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true},
+      "targets": [{"expr": "sum(count_over_time({job=\"network-events\",severity=~\"${severity:regex}\",event_type=~\"${event_type:regex}\"}[$__range]))", "queryType": "range", "refId": "A"}],
+      "title": "Events in selected range",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "network-events-loki"},
+      "fieldConfig": {"defaults": {"custom": {"drawStyle": "line", "fillOpacity": 18, "lineInterpolation": "smooth", "lineWidth": 2, "showPoints": "never"}, "unit": "short"}, "overrides": []},
+      "gridPos": {"h": 10, "w": 18, "x": 6, "y": 0},
+      "id": 2,
+      "options": {"legend": {"calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"expr": "sum by (severity) (count_over_time({job=\"network-events\",severity=~\"${severity:regex}\",event_type=~\"${event_type:regex}\"}[$__auto]))", "legendFormat": "{{severity}}", "queryType": "range", "refId": "A"}],
+      "title": "Event rate by severity",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "network-events-loki"},
+      "gridPos": {"h": 15, "w": 24, "x": 0, "y": 10},
+      "id": 3,
+      "options": {"dedupStrategy": "signature", "enableInfiniteScrolling": false, "prettifyLogMessage": true, "showCommonLabels": false, "showLabels": false, "showTime": true, "sortOrder": "Descending", "wrapLogMessage": true},
+      "targets": [{"expr": "{job=\"network-events\",severity=~\"${severity:regex}\",event_type=~\"${event_type:regex}\"} | json | device_name=~\"${device:regex}\"", "queryType": "range", "refId": "A"}],
+      "title": "Normalized network event stream",
+      "type": "logs"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 41,
+  "tags": ["network", "syslog", "loki"],
+  "templating": {
+    "list": [
+      {"current": {"selected": true, "text": "All", "value": ".*"}, "hide": 0, "includeAll": false, "label": "Severity", "name": "severity", "options": [{"selected": true, "text": "All", "value": ".*"}, {"selected": false, "text": "Critical", "value": "critical"}, {"selected": false, "text": "High", "value": "high"}, {"selected": false, "text": "Medium", "value": "medium"}, {"selected": false, "text": "Low", "value": "low"}], "query": ".*,critical,high,medium,low", "type": "custom"},
+      {"current": {"selected": true, "text": "All", "value": ".*"}, "hide": 0, "includeAll": false, "label": "Event type", "name": "event_type", "options": [{"selected": true, "text": "All", "value": ".*"}], "query": ".*,link_up,link_down,port_flap,routing_neighbor_down,configuration_change,login_failure,acl_deny,port_security", "type": "custom"},
+      {"current": {"selected": true, "text": ".*", "value": ".*"}, "hide": 0, "label": "Device regex", "name": "device", "options": [{"selected": true, "text": ".*", "value": ".*"}], "query": ".*", "type": "textbox"}
+    ]
+  },
+  "time": {"from": "now-6h", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Network Event Operations",
+  "uid": "network-event-operations",
+  "version": 1
+}

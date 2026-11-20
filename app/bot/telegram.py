@@ -156,9 +156,8 @@ def alert_keyboard(
 def _summary_text(count: int, rules: Counter[str]) -> str:
     top = rules.most_common(3)
     top_text = ", ".join(f"<code>{html.escape(rule)}</code> ({hits})" for rule, hits in top)
-    return (
-        f"⚠️ <b>{count} more alerts suppressed</b> by the global rate limit."
-        + (f"\nTop rules: {top_text}" if top_text else "")
+    return f"⚠️ <b>{count} more alerts suppressed</b> by the global rate limit." + (
+        f"\nTop rules: {top_text}" if top_text else ""
     )
 
 
@@ -246,14 +245,10 @@ class NotificationWorker:
                     if decision.action == "update" and key in message_ids:
                         await self.telegram.edit_message(chat_id, message_ids[key], text, keyboard)
                     else:
-                        message_ids[key] = await self.telegram.send_message(
-                            chat_id, text, keyboard
-                        )
+                        message_ids[key] = await self.telegram.send_message(chat_id, text, keyboard)
                     # Persist after each destination so a later transient failure
                     # resumes by editing instead of duplicating successful sends.
-                    self.database.set_notification_message_ids(
-                        decision.fingerprint, message_ids
-                    )
+                    self.database.set_notification_message_ids(decision.fingerprint, message_ids)
                 except PermanentTelegramError:
                     LOGGER.warning(
                         "Skipped unreachable Telegram destination", extra={"chat_id": chat_id}
@@ -302,12 +297,8 @@ class BotCommandHandler:
                 "/ack &lt;alert_id&gt;"
             )
         if command == "/status":
-            source = html.escape(self.settings.alert_source)
-            health = html.escape(
-                self.database.get_state(f"{self.settings.alert_source}_health")
-                or self.database.get_state("wazuh_health")
-                or "unknown"
-            )
+            source = "operational" if self.settings.postgres_dsn else "mock"
+            health = html.escape(self.database.get_state("event_source_health") or "unknown")
             last_alert = html.escape(self.database.get_state("last_alert_time") or "none")
             queue = len(self.database.pending_notifications(limit=100))
             size_kib = (
@@ -345,9 +336,7 @@ class BotCommandHandler:
         if command == "/stats":
             stats = self.database.basic_stats()
             severity = ", ".join(f"{key}={value}" for key, value in stats["severity"].items())
-            devices = ", ".join(
-                f"{key}={value}" for key, value in stats["device_type"].items()
-            )
+            devices = ", ".join(f"{key}={value}" for key, value in stats["device_type"].items())
             return f"Severity: {severity or 'none'}\nDevice type: {devices or 'none'}"
         if command == "/mute" and len(arguments) == 2:
             try:
@@ -397,11 +386,9 @@ class BotCommandHandler:
                 updated = self.database.get_alert(alert_id)
                 message_id = message.get("message_id")
                 if updated and isinstance(message_id, int):
-                    group = self.database.get_notification_group(
-                        Deduplicator.fingerprint(updated)
-                    )
-                    count = int(group["alert_count"]) if group else int(
-                        updated.get("event_count", 1)
+                    group = self.database.get_notification_group(Deduplicator.fingerprint(updated))
+                    count = (
+                        int(group["alert_count"]) if group else int(updated.get("event_count", 1))
                     )
                     catalog_entry = self.catalog.get(str(updated.get("use_case_id") or ""))
                     if catalog_entry:
@@ -449,29 +436,3 @@ class TelegramBotRunner:
             self.database.set_state("telegram_update_offset", str(offset))
         self.database.set_state("telegram_bot_health", "connected")
         return len(updates)
-
-
-class SourceHealthNotifier:
-    """Notify once for an outage and once when the source recovers."""
-
-    def __init__(self, settings: Settings, telegram: TelegramGateway) -> None:
-        self.settings = settings
-        self.telegram = telegram
-        self._unavailable = False
-
-    async def report_unavailable(self) -> None:
-        if self._unavailable:
-            return
-        self._unavailable = True
-        for chat_id in self.settings.allowed_chat_ids:
-            await self.telegram.send_message(
-                chat_id,
-                "⚠️ <b>Alert source unavailable.</b> Retrying automatically.",
-            )
-
-    async def report_recovered(self) -> None:
-        if not self._unavailable:
-            return
-        self._unavailable = False
-        for chat_id in self.settings.allowed_chat_ids:
-            await self.telegram.send_message(chat_id, "✅ <b>Alert source recovered.</b>")

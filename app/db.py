@@ -126,9 +126,7 @@ class Database:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as connection:
             connection.executescript(SCHEMA)
-            existing = {
-                str(row["name"]) for row in connection.execute("PRAGMA table_info(alerts)")
-            }
+            existing = {str(row["name"]) for row in connection.execute("PRAGMA table_info(alerts)")}
             for name, declaration in MIGRATION_COLUMNS.items():
                 if name not in existing:
                     connection.execute(f"ALTER TABLE alerts ADD COLUMN {name} {declaration}")
@@ -615,8 +613,7 @@ class Database:
                 timeline_buckets[lbl] = int(row_dict["value"])
 
             timeline_data = [
-                {"label": lbl, "value": val}
-                for lbl, val in sorted(timeline_buckets.items())
+                {"label": lbl, "value": val} for lbl, val in sorted(timeline_buckets.items())
             ]
         return {
             "total": int(total),

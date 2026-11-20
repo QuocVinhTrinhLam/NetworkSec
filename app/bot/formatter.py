@@ -60,9 +60,7 @@ def _mitre_text(alert: dict[str, Any]) -> str:
     techniques = alert.get("mitre")
     if isinstance(techniques, list):
         values = [
-            str(item.get("id"))
-            for item in techniques
-            if isinstance(item, dict) and item.get("id")
+            str(item.get("id")) for item in techniques if isinstance(item, dict) and item.get("id")
         ]
         if values:
             return ", ".join(values)

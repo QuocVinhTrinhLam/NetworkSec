@@ -16,14 +16,14 @@
   <div class="detail-actions">
     <div class="detail-badges">
       <span class="badge severity-{{ alert.severity }}">{{ alert.severity }}</span>
-      <span class="state-pill {{ 'state-acknowledged' if alert.acknowledged else 'state-new' }}"><span></span>{{ 'Acknowledged' if alert.acknowledged else 'New' }}</span>
+      <span class="state-pill state-{{ alert.status }}"><span></span>{{ alert.status | title }}</span>
     </div>
-    {% if not alert.acknowledged %}
+    {% if alert.status == 'new' %}
     <form method="post" action="/alerts/{{ alert.id }}/ack">
       <input type="hidden" name="csrf" value="{{ csrf_token }}">
       <button class="primary" type="submit">Acknowledge alert</button>
     </form>
-    {% else %}
+    {% elif alert.status == 'acknowledged' %}
     <p class="acknowledged-meta">Acknowledged by <strong>{{ alert.acknowledged_by }}</strong><br><time datetime="{{ alert.acknowledged_at }}">{{ alert.acknowledged_at[0:10] }} at {{ alert.acknowledged_at[11:19] }}</time></p>
     {% endif %}
   </div>
@@ -36,6 +36,10 @@
         <div><p class="panel-kicker">Event evidence</p><h2 id="evidence-title">Observed entities</h2></div>
       </header>
       <dl class="detail-grid detail-facts">
+        <div><dt>Event count</dt><dd>{{ alert.count if alert.count is defined else alert.event_count or 1 }}</dd></div>
+        <div><dt>First seen</dt><dd><time datetime="{{ alert.first_seen if alert.first_seen is defined else alert.timestamp }}">{{ (alert.first_seen if alert.first_seen is defined else alert.timestamp)[0:19] }}</time></dd></div>
+        <div><dt>Last seen</dt><dd><time datetime="{{ alert.last_seen if alert.last_seen is defined else alert.timestamp }}">{{ (alert.last_seen if alert.last_seen is defined else alert.timestamp)[0:19] }}</time></dd></div>
+        <div><dt>Status</dt><dd>{{ alert.status | title }}</dd></div>
         <div><dt>Source IP</dt><dd><code>{{ alert.source_ip or 'Unknown' }}</code></dd></div>
         <div><dt>Destination IP</dt><dd><code>{{ alert.dest_ip or 'Unknown' }}</code></dd></div>
         <div><dt>User</dt><dd>{{ alert.username or 'Not identified' }}</dd></div>

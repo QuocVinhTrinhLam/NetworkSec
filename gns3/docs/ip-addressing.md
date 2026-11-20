@@ -14,9 +14,15 @@ verified against guest configuration because the GNS3 VM and nodes remained powe
 | PC1 | `10.10.10.10/24` | Planned; VPCS startup unavailable |
 | PC2 | `10.10.20.10/24` | Planned; VPCS startup unavailable |
 | PC3 | `10.10.30.10/24` | Planned; VPCS startup unavailable |
+| Proposed management VLAN 99 | `10.10.99.0/24` | Phase 7 plan; not applied |
+| Proposed MikroTik VLAN 99 gateway | `10.10.99.1/24` | Phase 7 plan; not applied |
+| Proposed managed-switch SVI | `10.10.99.2/24` | Phase 7 plan; not applied |
+| Proposed Ubuntu Syslog NIC | `10.10.99.10/24` | Phase 7 plan; not applied |
 
-The `/30` transit has usable addresses `10.10.0.1` and `10.10.0.2`. Default gateways for
-the three client VLANs were not supplied or verified and are deliberately not invented.
+The `/30` transit has usable addresses `10.10.0.1` and `10.10.0.2`. Phase 7 proposes
+`.1` gateways on VLAN 10, 20 and 99, but none has been verified or applied. VLAN 30 keeps
+its earlier unverified status and is outside the lightweight Phase 7 topology.
 
-Before deployment, collect `config.xml`, a RouterOS `/export show-sensitive=no`, and each
-VPCS `startup.vpc`; compare them with this plan and record any differences.
+Before deployment, compare a RouterOS `/export show-sensitive=no` and each available VPCS
+`startup.vpc` with this plan. Validate pfSense addressing/routes in its GUI without copying
+`config.xml` into the repository because that file may contain sensitive material.

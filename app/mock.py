@@ -29,9 +29,7 @@ def parse_distribution(value: str) -> Mapping[str, float]:
             "use low=0.1,medium=0.3,high=0.35,critical=0.25"
         ) from error
     if set(result) != {"low", "medium", "high", "critical"}:
-        raise argparse.ArgumentTypeError(
-            "distribution must define low, medium, high and critical"
-        )
+        raise argparse.ArgumentTypeError("distribution must define low, medium, high and critical")
     return result
 
 

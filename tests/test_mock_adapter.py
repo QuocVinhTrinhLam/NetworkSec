@@ -36,9 +36,7 @@ async def test_replay_fixtures_cover_catalog_and_correspond_to_vendor_logs() -> 
     alerts = await drain(adapter)
 
     assert len(documents) == len(alerts) == 12
-    assert {alert.rule.catalog_id for alert in alerts} == {
-        entry.id for entry in catalog.entries
-    }
+    assert {alert.rule.catalog_id for alert in alerts} == {entry.id for entry in catalog.entries}
     assert all(document["full_log"] in raw_lines for document in documents)
     assert {alert.device.vendor for alert in alerts} >= {
         "Netgate/pfSense",

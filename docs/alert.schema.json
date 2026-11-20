@@ -3,8 +3,7 @@
     "AlertSource": {
       "description": "Supported alert producers.",
       "enum": [
-        "mock",
-        "wazuh"
+        "mock"
       ],
       "title": "AlertSource",
       "type": "string"

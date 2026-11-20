@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Alert queue · {{ app_name }}{% endblock %}
 {% block content %}
-{% set new_on_page = alerts | rejectattr('acknowledged') | list | length %}
+{% set new_on_page = alerts | selectattr('status', 'equalto', 'new') | list | length %}
 {% set critical_on_page = alerts | selectattr('severity', 'equalto', 'critical') | list | length %}
 {% set high_on_page = alerts | selectattr('severity', 'equalto', 'high') | list | length %}
 
@@ -11,10 +11,10 @@
     <h1>Alert queue</h1>
     <p class="muted">Triage detections, inspect affected entities, and prioritize analyst response.</p>
   </div>
-  <a class="button export-button" href="/alerts/export.csv?time_range={{ filters.time_range | urlencode }}&amp;severity={{ filters.severity | urlencode }}&amp;device={{ filters.device | urlencode }}&amp;rule_id={{ filters.rule_id | urlencode }}&amp;source_ip={{ filters.source_ip | urlencode }}&amp;search={{ filters.search | urlencode }}">
+  {% if not operational %}<a class="button export-button" href="/alerts/export.csv?time_range={{ filters.time_range | urlencode }}&amp;severity={{ filters.severity | urlencode }}&amp;device={{ filters.device | urlencode }}&amp;rule_id={{ filters.rule_id | urlencode }}&amp;source_ip={{ filters.source_ip | urlencode }}&amp;search={{ filters.search | urlencode }}">
     <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 20h14"/></svg>
     Export CSV
-  </a>
+  </a>{% endif %}
 </header>
 
 <section class="queue-summary" aria-label="Alert queue summary">
@@ -74,12 +74,14 @@
   </div>
 
   <div class="filter-secondary">
-    <details {% if filters.device or filters.rule_id or filters.source_ip %}open{% endif %}>
+    <details {% if filters.device or filters.rule_id or filters.source_ip or filters.event_type or filters.status %}open{% endif %}>
       <summary>Advanced filters</summary>
       <div class="advanced-filter-grid">
         <label><span>Device</span><input name="device" value="{{ filters.device }}" placeholder="e.g. edge-pfsense"></label>
         <label><span>Source IP</span><input name="source_ip" value="{{ filters.source_ip }}" placeholder="e.g. 192.0.2.88"></label>
         <label><span>Rule ID</span><input name="rule_id" value="{{ filters.rule_id }}" placeholder="e.g. 100280"></label>
+        <label><span>Event type</span><select name="event_type"><option value="">All event types</option>{% for value in ['link_up', 'link_down', 'port_flap', 'routing_neighbor_down', 'configuration_change', 'login_failure', 'acl_deny', 'port_security'] %}<option value="{{ value }}" {% if filters.event_type == value %}selected{% endif %}>{{ value | replace('_', ' ') | title }}</option>{% endfor %}</select></label>
+        <label><span>Status</span><select name="status"><option value="">All statuses</option>{% for value in ['new', 'acknowledged', 'resolved'] %}<option value="{{ value }}" {% if filters.status == value %}selected{% endif %}>{{ value | title }}</option>{% endfor %}</select></label>
       </div>
     </details>
     <a class="reset-link" href="/alerts">Reset filters</a>
@@ -102,9 +104,9 @@
         <tr>
           <th scope="col">Severity</th>
           <th scope="col">Detection</th>
-          <th scope="col">Source / destination</th>
+          <th scope="col">Count / type</th>
           <th scope="col">Asset</th>
-          <th scope="col">Observed</th>
+          <th scope="col">First / last seen</th>
           <th scope="col">State</th>
           <th scope="col"><span class="sr-only">Open alert</span></th>
         </tr>
@@ -117,20 +119,20 @@
             <a href="/alerts/{{ alert.id }}">{{ alert.rule_description }}</a>
             <span><code>{{ alert.rule_id }}</code>{% if alert.mitre_id %}<span aria-hidden="true">·</span> MITRE {{ alert.mitre_id }}{% endif %}</span>
           </td>
-          <td data-label="Source / destination" class="network-cell">
-            <code>{{ alert.source_ip or 'Unknown source' }}</code>
-            {% if alert.dest_ip %}<small><span class="sr-only">to </span><span aria-hidden="true">→</span> {{ alert.dest_ip }}</small>{% endif %}
+          <td data-label="Count / type" class="network-cell">
+            <strong>{{ alert.count if alert.count is defined else alert.event_count or 1 }} events</strong>
+            <small>{{ alert.event_type if alert.event_type is defined else alert.rule_id }}</small>
           </td>
           <td data-label="Asset" class="asset-cell">
             <strong>{{ alert.device_name }}</strong>
             <small>{{ alert.device_type }}</small>
           </td>
-          <td data-label="Observed" class="observed-cell">
-            <time datetime="{{ alert.timestamp }}">{{ alert.timestamp[0:10] }}<span>{{ alert.timestamp[11:19] }}</span></time>
+          <td data-label="First / last seen" class="observed-cell">
+            <time datetime="{{ alert.first_seen if alert.first_seen is defined else alert.timestamp }}">{{ (alert.first_seen if alert.first_seen is defined else alert.timestamp)[0:19] }}<span>to {{ (alert.last_seen if alert.last_seen is defined else alert.timestamp)[0:19] }}</span></time>
           </td>
           <td data-label="State">
-            <span class="state-pill {{ 'state-acknowledged' if alert.acknowledged else 'state-new' }}">
-              <span></span>{{ 'Acknowledged' if alert.acknowledged else 'New' }}
+            <span class="state-pill state-{{ alert.status if alert.status is defined else ('acknowledged' if alert.acknowledged else 'new') }}">
+              <span></span>{{ (alert.status if alert.status is defined else ('acknowledged' if alert.acknowledged else 'new')) | title }}
             </span>
           </td>
           <td class="row-action" aria-hidden="true"><span>Open <span>→</span></span></td>
@@ -155,10 +157,10 @@
   <span>Page {{ page }} of {{ pages }} <small>· {{ total }} events</small></span>
   <div>
     {% if page > 1 %}
-    <a class="button" href="?page={{ page - 1 }}&amp;time_range={{ filters.time_range | urlencode }}&amp;severity={{ filters.severity | urlencode }}&amp;device={{ filters.device | urlencode }}&amp;rule_id={{ filters.rule_id | urlencode }}&amp;source_ip={{ filters.source_ip | urlencode }}&amp;search={{ filters.search | urlencode }}">Previous</a>
+    <a class="button" href="?page={{ page - 1 }}&amp;time_range={{ filters.time_range | urlencode }}&amp;severity={{ filters.severity | urlencode }}&amp;device={{ filters.device | urlencode }}&amp;event_type={{ filters.event_type | urlencode }}&amp;status={{ filters.status | urlencode }}">Previous</a>
     {% endif %}
     {% if page < pages %}
-    <a class="button" href="?page={{ page + 1 }}&amp;time_range={{ filters.time_range | urlencode }}&amp;severity={{ filters.severity | urlencode }}&amp;device={{ filters.device | urlencode }}&amp;rule_id={{ filters.rule_id | urlencode }}&amp;source_ip={{ filters.source_ip | urlencode }}&amp;search={{ filters.search | urlencode }}">Next</a>
+    <a class="button" href="?page={{ page + 1 }}&amp;time_range={{ filters.time_range | urlencode }}&amp;severity={{ filters.severity | urlencode }}&amp;device={{ filters.device | urlencode }}&amp;event_type={{ filters.event_type | urlencode }}&amp;status={{ filters.status | urlencode }}">Next</a>
     {% endif %}
   </div>
 </nav>

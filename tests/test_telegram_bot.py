@@ -14,7 +14,6 @@ from app.bot.telegram import (
     BotCommandHandler,
     NotificationWorker,
     PermanentTelegramError,
-    SourceHealthNotifier,
     TelegramBotRunner,
     alert_keyboard,
 )
@@ -83,9 +82,9 @@ class FakeDatabase:
         self.states: dict[str, str] = {}
 
     def pending_notifications(self, limit: int = 100) -> list[dict[str, Any]]:
-        return [
-            alert for alert_id, alert in self.alerts.items() if alert_id not in self.processed
-        ][:limit]
+        return [alert for alert_id, alert in self.alerts.items() if alert_id not in self.processed][
+            :limit
+        ]
 
     def mark_notification_processed(self, alert_id: str) -> None:
         self.processed.add(alert_id)
@@ -395,27 +394,11 @@ async def test_commands_unmute_and_ack_callback_updates_message(tmp_path: Path) 
 
 
 @pytest.mark.asyncio
-async def test_source_health_notifies_once_and_on_recovery(tmp_path: Path) -> None:
-    settings = Settings(database_path=tmp_path / "health.db", allowed_chat_ids={1234})
-    gateway = FakeGateway()
-    notifier = SourceHealthNotifier(settings, gateway)
-
-    await notifier.report_unavailable()
-    await notifier.report_unavailable()
-    await notifier.report_recovered()
-    await notifier.report_recovered()
-
-    assert len(gateway.sent) == 2
-    assert "unavailable" in gateway.sent[0][1]
-    assert "recovered" in gateway.sent[1][1]
-
-
-@pytest.mark.asyncio
 async def test_all_command_paths_and_mute_callback(tmp_path: Path) -> None:
     alert = _alert("a" * 64)
     database = FakeDatabase(tmp_path / "commands-all.db", [alert])
     database.path.write_bytes(b"sqlite")
-    database.states["mock_health"] = "connected"
+    database.states["event_source_health"] = "connected"
     database.states["last_alert_time"] = alert["timestamp"]
     gateway = FakeGateway()
     settings = Settings(database_path=database.path, allowed_chat_ids={1234})

@@ -8,13 +8,14 @@ import logging
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
-from app.adapters import build_adapter
+from app.bot.aggregated import AggregatedNotificationWorker
 from app.bot.aiogram_runtime import AiogramBotRuntime
-from app.bot.telegram import NotificationWorker, SourceHealthNotifier
+from app.bot.telegram import NotificationWorker
 from app.config import get_settings
 from app.db import Database
 from app.logging_config import configure_logging
 from app.services.silent_devices import SilentDeviceWatcher
+from app.storage.postgres import PostgresAlertStorage
 
 LOGGER = logging.getLogger(__name__)
 READY_FILE = Path("/tmp/bot.ready")
@@ -39,23 +40,23 @@ async def run() -> None:
 
     database = Database(settings.database_path)
     database.initialize()
-    adapter = build_adapter(settings)
     runtime = AiogramBotRuntime(settings, database)
-    notifications = NotificationWorker(settings, database, runtime.gateway)
+    if settings.postgres_dsn:
+        alert_storage = PostgresAlertStorage(
+            settings.postgres_dsn,
+            settings.postgres_migrations_path,
+            connect_timeout=settings.postgres_connect_timeout_seconds,
+        )
+        alert_storage.migrate()
+        notifications: NotificationWorker | AggregatedNotificationWorker = (
+            AggregatedNotificationWorker(settings, alert_storage, runtime.gateway)
+        )
+    else:
+        notifications = NotificationWorker(settings, database, runtime.gateway)
     silent_watcher = SilentDeviceWatcher(settings, database)
-    health = SourceHealthNotifier(settings, runtime.gateway)
-
     await runtime.bot.get_me()
     READY_FILE.touch(mode=0o600)
-    if settings.alert_source == "wazuh":
-        try:
-            await adapter.fetch_new_alerts()
-        except NotImplementedError as error:
-            database.set_state("wazuh_health", "not-implemented")
-            LOGGER.warning("Wazuh adapter unavailable in Phase 1", extra={"reason": str(error)})
-            await health.report_unavailable()
-    else:
-        database.set_state("mock_health", "connected")
+    database.set_state("event_source_health", "connected")
 
     async def watch_silent_devices() -> object:
         return silent_watcher.run_once()

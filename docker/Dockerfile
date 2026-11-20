@@ -1,27 +1,36 @@
-FROM python:3.12.12-slim-bookworm@sha256:593bd06efe90efa80dc4eee3948be7c0fde4134606dd40d8dd8dbcade98e669c AS builder
+# syntax=docker/dockerfile:1
+
+FROM python:3.12.12-slim-bookworm@sha256:593bd06efe90efa80dc4eee3948be7c0fde4134606dd40d8dd8dbcade98e669c AS dependencies
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PIP_NO_CACHE_DIR=1
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
 
 WORKDIR /build
-COPY requirements.txt ./
-RUN python -m pip install --prefix=/install -r requirements.txt
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+RUN --mount=type=bind,source=requirements.txt,target=/build/requirements.txt,readonly \
+    --mount=type=cache,target=/root/.cache/pip \
+    python -m pip install --no-compile -r requirements.txt
 
 FROM python:3.12.12-slim-bookworm@sha256:593bd06efe90efa80dc4eee3948be7c0fde4134606dd40d8dd8dbcade98e669c AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PATH=/usr/local/bin:$PATH
+    PATH="/opt/venv/bin:$PATH"
 
 RUN addgroup --system --gid 10001 monitor \
     && adduser --system --uid 10001 --ingroup monitor --home /app monitor
 
 WORKDIR /app
-COPY --from=builder /install /usr/local
-COPY --chown=monitor:monitor app ./app
-COPY --chown=monitor:monitor config ./config
-COPY --chown=monitor:monitor fixtures ./fixtures
-RUN mkdir -p /app/data && chown monitor:monitor /app/data
+COPY --from=dependencies --link /opt/venv /opt/venv
+COPY --link --chown=10001:10001 app ./app
+COPY --link --chown=10001:10001 config ./config
+COPY --link --chown=10001:10001 fixtures ./fixtures
+COPY --link --chown=10001:10001 migrations ./migrations
+RUN mkdir -p /app/data /app/processor-state \
+    && chown 10001:10001 /app/data /app/processor-state
 
 USER 10001:10001
 EXPOSE 8000

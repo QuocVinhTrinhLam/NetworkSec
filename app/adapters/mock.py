@@ -281,9 +281,7 @@ class MockAdapter(BaseAdapter):
         }
         fixture_id, event_count = plans[scenario]
         timeline = _timeline(end, event_count, duration_seconds)
-        result = [
-            self._with_timestamp(fixtures[fixture_id], timestamp) for timestamp in timeline
-        ]
+        result = [self._with_timestamp(fixtures[fixture_id], timestamp) for timestamp in timeline]
 
         if scenario == "ssh_bruteforce":
             success = copy.deepcopy(fixtures["admin-login-success"])
