@@ -24,9 +24,10 @@ python -m pytest tests/integration/test_postgres_ospf_lifecycle.py tests/integra
 - `test_postgres_ospf_lifecycle.py` kiểm tra migration tăng dần, transaction, replay,
   stale Full, ACK, resolve, API/CSV và delivery claims với Telegram fake.
 - `test_ospf_spool_to_loki_incident_dashboard_and_telegram` dùng cả hai backend. Test
-  đưa envelope Syslog tổng hợp vào reader thực, restart worker bằng state cũ, kiểm tra
-  hai Down cùng incident, Full đến muộn, chứng cứ Loki, session/ACK và một lần cập nhật
-  thẻ Telegram giả lập sau recovery.
+  chạy với hai CHR và với một cặp MikroTik–Cisco để kiểm tra tương thích. Mỗi ca đưa
+  envelope Syslog mô phỏng vào reader thực, restart worker bằng state cũ, kiểm tra hai
+  Down cùng incident, Full đến muộn, chứng cứ Loki, session/ACK và một lần cập nhật
+  thẻ Telegram giả lập sau recovery. Syslog từ thiết bị thật được nghiệm thu riêng.
 - `test_ospf_loki_queries.py` chạy sáu biểu thức của dashboard OSPF trên Loki với dữ
   liệu phiên bản `1.0` và `1.1`. Grafana runtime vẫn cần smoke test khi deploy.
 - `test_gns3_phase7.py` là test snapshot cũ tám node, bảy link. Checklist nghiệm thu

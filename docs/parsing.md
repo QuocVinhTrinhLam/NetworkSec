@@ -39,7 +39,11 @@ Pattern Cisco được đối chiếu với [Cisco system message examples](http
 
 ## OSPFv2 Phase 1
 
-Hai fixture `cisco-ospf-synthetic.log` và `mikrotik-ospf-synthetic.log` là dữ liệu mô phỏng dựa trên mẫu công khai, dùng địa chỉ dành cho tài liệu. Chưa có mẫu bắt trực tiếp từ R1/R2 của lab.
+Các fixture `cisco-ospf-synthetic.log`, `mikrotik-ospf-synthetic.log` và
+`mikrotik-ospf-dual-synthetic.log` là dữ liệu mô phỏng dựa trên mẫu công khai, dùng
+địa chỉ dành cho tài liệu. Fixture dual kiểm tra local/peer ID đảo chiều, Down, Full
+và trạng thái trung gian từ hai CHR. Các fixture ban đầu tiếp tục kiểm tra Cisco,
+RouterOS BSD remote và console. Các mẫu remote thật từ cả R1 và R2 vẫn cần thu thập.
 
 | Nguồn | Dạng được kiểm thử | Metadata có trong log |
 |---|---|---|
@@ -59,7 +63,12 @@ Hai fixture `cisco-ospf-synthetic.log` và `mikrotik-ospf-synthetic.log` là d�
 ## Unsupported hoặc chưa xác minh
 
 - Port Flap: chưa có raw sample thể hiện nhiều transition/cửa sổ thời gian. Parser chỉ tạo từng `link_up`/`link_down`; correlation/flap detection chưa được suy đoán.
-- BGP, OSPFv3 và format OSPF ngoài các mẫu trên chưa được hỗ trợ. Cần mẫu live từ IOSv và CHR để xác minh header thực tế, timezone, topics/prefix, Down, Full và intermediate nếu thiết bị phát.
+- BGP, OSPFv3 và format OSPF ngoài các mẫu trên chưa được hỗ trợ. Cần mẫu live từ cả
+  hai CHR để xác minh header, timezone, topics/prefix, Down, Full và trạng thái trung
+  gian nếu thiết bị phát.
+- Cisco IOS parser nhận interface Link Up/Down, config và port security theo đúng
+  định dạng fixture. Các fixture này chưa xác minh image IOSvL2 của lab. Cần mẫu
+  syslog từ image được chọn vì header và payload phát qua mạng có thể khác mẫu IOS.
 - Cisco `SEC_LOGIN-5-LOGIN_SUCCESS` và `SYS-5-RESTART`: có fixture nhưng ngoài event types Phase 3, trả `unknown`.
 - Cisco `*` hoặc số thứ tự được nhận cho `OSPF-5-ADJCHG`. Timezone token, stack suffix, multiline, record thiếu ngày/tháng và cấu hình qua TFTP chưa được hỗ trợ.
 - OPNsense `arpwatch` và OpenVPN samples: chưa có mapping cho event types được yêu cầu, trả `unknown`.

@@ -4,8 +4,9 @@
 
 N4.2 thu nhận Syslog từ thiết bị mạng, Loghub và Python Syslog Generator. Mục tiêu triển
 khai lab là Ubuntu Server 2 vCPU, khoảng 5,3 GiB RAM, chạy Docker Compose. Chuỗi OSPF
-đã được kiểm thử từ envelope mô phỏng đến Loki, PostgreSQL, Custom Dashboard và Telegram
-giả lập. Syslog live R1–R2, Grafana runtime trong Compose và benchmark Ubuntu cần xác nhận riêng.
+cho hai router MikroTik được kiểm thử bằng envelope mô phỏng từ processor đến Loki,
+PostgreSQL, Custom Dashboard và Telegram giả lập. Syslog live R1–R2, Grafana runtime
+trong Compose và benchmark Ubuntu cần xác nhận riêng.
 
 ```text
 GNS3 / Loghub / Python Generator
@@ -26,6 +27,23 @@ GNS3 / Loghub / Python Generator
 ```
 
 API sự kiện và liên kết điều tra từ Custom Dashboard cũng truy vấn Loki.
+
+## Topology lab đã chốt
+
+R1 và R2 đều là MikroTik CHR chạy RouterOS v7. Hai router thiết lập OSPFv2 Area 0.
+Cisco IOSvL2 là switch quản lý và pfSense là firewall tùy chọn. Subnet transit, địa
+chỉ hai đầu, Router ID, interface và IP nguồn Syslog chờ operator xác nhận từ lab.
+`10.10.40.0/30` chỉ là đề xuất, chưa được phê duyệt.
+
+| VLAN | Vai trò | Subnet |
+| --- | --- | --- |
+| 10 | Management / Admin Host | `10.10.10.0/24` |
+| 20 | Users / Test Host | `10.10.20.0/24` |
+| 30 | Servers | `10.10.30.0/24` |
+
+Các thiết bị gửi Syslog đến rsyslog cổng `5514`. RouterOS dùng UDP cho luồng Syslog
+cần nghiệm thu trong lab. Đường đến collector cần khả dụng cả khi adjacency OSPF
+bị ngắt trong kiểm thử. Xem [checklist nghiệm thu live](deployment.md#điều-kiện-lab-và-checklist-nghiệm-thu-live).
 
 ## Boundary thành phần
 
@@ -138,7 +156,9 @@ timestamp kỹ thuật. Sự cố đang mở tiếp tục hiện trong queue m�
 - Telegram claim atomically theo severity, event count và cooldown; update message đã lưu thay vì gửi bản trùng.
 - Semantics và giới hạn last-mile nằm trong [dashboard_notifications.md](dashboard_notifications.md).
 
-## Quyết định Phase 7
+## Quyết định Phase 7 (lịch sử)
+
+Các mục dưới đây mô tả thiết kế và snapshot gốc trước topology hai CHR.
 
 - Giữ CHR và host hiện hữu; chỉ thay built-in Switch1 bằng managed IOSvL2 hợp pháp sau
   approval vì built-in switch không có control plane/Syslog.

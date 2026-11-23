@@ -16,7 +16,7 @@ Với deployment đang chạy, giữ tên Compose project, cấu hình và named
 | Thành phần | Biến và giá trị triển khai |
 |---|---|
 | PostgreSQL | `POSTGRES_PASSWORD` bắt buộc. Compose ghép password vào DSN libpq dạng key/value; dùng giá trị mạnh dạng hex để tránh ký tự cần escape. `POSTGRES_DB` và `POSTGRES_USER` mặc định `networksec`. Giữ `POSTGRES_BIND_HOST=127.0.0.1`, port mặc định `5432`. |
-| rsyslog | `SYSLOG_BIND_HOST` mặc định `127.0.0.1`. Khi nhận log từ GNS3, đặt thành **IP NIC lab đã có trên Ubuntu**, chẳng hạn `10.10.99.10` nếu đó là IP thực tế. `SYSLOG_TCP_PORT` và `SYSLOG_UDP_PORT` đều mặc định `5514`. |
+| rsyslog | `SYSLOG_BIND_HOST` mặc định `127.0.0.1`. Khi nhận log từ GNS3, đặt thành **IP NIC lab đã xác nhận trên Ubuntu**. `SYSLOG_TCP_PORT` và `SYSLOG_UDP_PORT` đều mặc định `5514`. |
 | Processor | `PROCESSOR_SOURCE_TIMEZONE` mặc định `UTC`. Đồng bộ đồng hồ R1, R2 và Ubuntu; đặt timezone khớp timestamp không có offset của nguồn. Chuẩn hóa các nguồn timestamp kiểu này về cùng timezone trước khi thu nhận. |
 | Loki | `LOKI_BIND_HOST=127.0.0.1`, port mặc định `3100`. Các container truy cập `http://loki:3100`. |
 | Grafana | `GRAFANA_ADMIN_PASSWORD` bắt buộc khi bật Grafana. `GRAFANA_ADMIN_USER` mặc định `admin`; giữ `GRAFANA_BIND_HOST=127.0.0.1`, port mặc định `3000`. |
@@ -34,10 +34,10 @@ Syslog plaintext. Giữ các cổng quản trị trên loopback và dùng đư�
    Sao lưu PostgreSQL và snapshot nhất quán các volume cần bảo toàn trước khi nâng cấp.
    Giữ ít nhất `syslog-raw`, `syslog-queue`, `processor-state`, `postgres-data`,
    `loki-data`, `grafana-data` và `monitor-data` trong kế hoạch sao lưu.
-2. Trước khi build, chốt scope, tên thiết bị nhìn thấy trong envelope, Router ID,
-   Area ID và tên interface thật của hai đầu trong `config/correlation_rules.yaml`.
-   Mặc định `ospf.links: []`. Cisco IOSv dùng mapping để có local Router ID và Area ID.
-   [Ví dụ mapping](correlation.md#định-danh-adjacency).
+2. Trước khi build, dùng log đã ghi nhận để xác nhận `device_name`, Router ID,
+   Area ID và `interface_name` của hai CHR. Điền vào `ospf.links` trong
+   `config/correlation_rules.yaml` để correlation hợp nhất hai phía. Mặc định danh
+   sách này rỗng. [Ví dụ mapping](correlation.md#định-danh-adjacency).
 3. Kiểm tra manifest tĩnh, sau đó chạy stack từ thư mục checkout trên Ubuntu.
    Các lệnh dưới đây dành cho lần triển khai thủ công đã được phê duyệt.
 
@@ -65,13 +65,20 @@ docker compose --env-file .env --profile notifications up -d --build --wait bot
 
 ### Điều kiện lab và checklist nghiệm thu live
 
-- [ ] Chuẩn bị image hợp lệ cho MikroTik CHR R1 và Cisco IOSv R2. Transit kết nối hai
-  router có OSPFv2 Area 0, Router ID riêng biệt, cùng subnet phù hợp và các tham số
-  adjacency tương thích. Xác nhận cả hai đầu đã ở Full.
-- [ ] Giữ đường gửi Syslog đến Ubuntu khả dụng khi thử ngắt transit OSPF. Kiểm tra từng
-  router gửi tới IP NIC lab và đúng port; ưu tiên TCP khi nguồn hỗ trợ. Bảo vệ dữ liệu
-  và ghi nhận timestamp, timezone, `source_host`, `raw_message` và `parse_message` cho
-  từng mẫu Down và Full trước khi cập nhật fixture đã khử dữ liệu nhạy cảm.
+- [ ] Kiểm tra R1 và R2 là MikroTik CHR chạy RouterOS v7, switch là Cisco IOSvL2,
+  và VLAN 10/20/30 khớp [topology đã chốt](architecture.md#topology-lab-đã-chốt).
+  Xác nhận subnet và địa chỉ transit thực tế, Area ID `0.0.0.0`, Router ID riêng
+  biệt và adjacency ở Full trên cả hai đầu. pfSense là tùy chọn.
+- [ ] Kiểm tra mỗi CHR gửi Syslog qua UDP tới IP NIC lab của Ubuntu và cổng `5514`.
+  Giữ đường tới collector khả dụng trong lúc thử gián đoạn adjacency. Ghi lại
+  phiên bản RouterOS, logging format, topics/prefix, IP nguồn nhận tại collector,
+  hostname trong header, timestamp/timezone, `received_at`, `source_host`,
+  `raw_message` và `parse_message` cho Down và Full của từng đầu. Giữ mẫu gốc trong
+  vùng kiểm soát và khử dữ liệu nhạy cảm trước khi thêm fixture.
+  [Tài liệu logging RouterOS](https://manual.mikrotik.com/docs/diagnostics-monitoring-and-troubleshooting/log/#send-the-log-to-a-syslog-server).
+- [ ] Thu mẫu IOSvL2 theo đúng image lab từ các sự kiện interface và config đã duyệt.
+  Đối chiếu header timestamp và mnemonic với parser Cisco hiện hữu. Khi có pfSense,
+  xác nhận đường gửi và mẫu IPv4 `filterlog` block nếu thiết bị tham gia bài test.
 - [ ] Trong cửa sổ test được duyệt, tạo một lần gián đoạn transit. Đối chiếu raw spool,
   envelope, checkpoint/DLQ và Loki. Hai Down của cùng link phải hiện như hai observation
   trong Grafana và một incident ID trong PostgreSQL/Custom Dashboard. Bản replay cùng
@@ -90,7 +97,8 @@ docker compose --env-file .env --profile notifications up -d --build --wait bot
 
 `tests/test_gns3_phase7.py` mô tả snapshot gốc tám node và bảy link. Kết quả snapshot
 chỉ xác nhận metadata đã lưu. [Runbook GNS3 gốc](../gns3/docs/phase7-syslog-integration.md)
-là bối cảnh cho đường Syslog management. Checklist trên mô tả topology R1–R2 dự kiến.
+là bối cảnh lịch sử cho đường Syslog management. Dùng checklist trên để nghiệm thu
+topology hai CHR đã chốt.
 
 ### Ngân sách tài nguyên
 
@@ -239,7 +247,9 @@ Grafana, PostgreSQL, Loki và Dashboard đều bind loopback mặc định. Nế
 Bot PostgreSQL chạy các migration hiện có, gồm delivery outbox OSPF trong `005`, trước loop.
 Backup PostgreSQL trước migration và giữ delivery state khi nâng cấp.
 
-## GNS3 Syslog Phase 7
+## GNS3 Syslog Phase 7 (lịch sử)
+
+Phần này ghi lại thiết kế Phase 7. IP và VLAN bên dưới thuộc môi trường gốc.
 
 Ubuntu dùng NIC lab riêng `10.10.99.10/24` không có default gateway; default route vẫn ở
 NIC quản trị/chính. Đặt `SYSLOG_BIND_HOST=10.10.99.10` và chỉ allow TCP/UDP 5514 từ

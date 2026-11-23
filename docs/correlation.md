@@ -101,22 +101,46 @@ Rule OSPF xử lý `DOWN` và `FULL` từ `NormalizedEvent 1.1`. Các trạng th
 
 Khóa gồm `scope` của collector, protocol OSPF, Area ID, cặp router ID đã sắp thứ tự và định danh link. Nối hai góc nhìn cần khai báo `links` với hai đầu interface trong `config/correlation_rules.yaml`. Mỗi đầu khớp chính xác `device_name`, `interface_name` và peer router ID. Area/local router ID mà event đã cung cấp phải khớp khai báo. Hai link song song dùng hai ID và hai cặp interface riêng.
 
-Ví dụ dưới đây dùng tên và địa chỉ từ fixture mô phỏng. Thay bằng identity ghi nhận trong lab trước khi triển khai:
+Ví dụ dưới đây dành cho hai CHR chạy RouterOS v7. Thay tất cả placeholder trước khi
+nạp cấu hình. `scope` và `id` là tên ổn định do operator đặt. `area` là Area ID OSPF
+đã chốt cho lab.
 
 ```yaml
 ospf:
   enabled: true
-  scope: n4-2-lab
+  scope: "<LAB_SCOPE>"
   max_clock_skew_seconds: 300
   links:
-    - id: r1-r2-transit
+    - id: "<TRANSIT_LINK_ID>"
       area: 0.0.0.0
       endpoints:
-        - {router_id: 192.0.2.1, device_name: R1, interface_name: ether3}
-        - {router_id: 192.0.2.2, device_name: R2, interface_name: GigabitEthernet0/1}
+        - router_id: "<R1_OSPF_ROUTER_ID>"
+          device_name: "<R1_NORMALIZED_DEVICE_NAME>"
+          interface_name: "<R1_OSPF_INTERFACE>"
+        - router_id: "<R2_OSPF_ROUTER_ID>"
+          device_name: "<R2_NORMALIZED_DEVICE_NAME>"
+          interface_name: "<R2_OSPF_INTERFACE>"
 ```
 
-Cấu hình trong repo để `links: []`. Khi thiết bị cung cấp đầy đủ Area ID, local/peer ID và interface, engine vẫn theo dõi riêng theo cặp `(device_name, interface_name)`. Dạng log Cisco IOSv của Phase 1 cần khai báo link để bổ sung Area ID và local router ID. Thiếu định danh, khớp nhiều link hoặc xung đột metadata khiến event chỉ đi vào Loki. Engine không suy ra link chung từ việc hai router có cùng cặp ID.
+Cấu hình trong repo để `links: []`. Thu thập các trường sau từ cả hai đầu trước khi bổ sung mapping.
+
+- IPv4 Router ID local và peer từ adjacency/log OSPF. Local ID ở một đầu phải đúng
+  bằng peer ID ở đầu kia. Xác nhận Area ID là `0.0.0.0` ở cả hai đầu.
+- `device_name` chính xác sau parsing. Với RouterOS remote, parser ưu tiên hostname
+  trong header. Worker dùng `source_host`, rồi `source_ip` làm fallback khi parser cần
+  tên nguồn. Đối chiếu tên bằng event chuẩn hóa, kể cả chữ hoa/thường.
+- `interface_name` đúng theo event. Với payload RouterOS được hỗ trợ, đó là tên nằm
+  sau ký tự `%` trong khối `interface`. IPv4 trước `%` là địa chỉ interface local.
+
+IP nguồn Syslog, subnet transit và IP interface giúp kiểm tra đường truyền.
+Các trường này không nằm trong cấu trúc endpoint của `ospf.links`.
+
+Khi chưa có mapping, event RouterOS đủ Area ID, local/peer ID và interface được theo
+dõi riêng theo cặp `(device_name, interface_name)` của mỗi đầu. Hai link song song
+có thể dùng cùng cặp router ID, nên chỉ ghép khi mapping khớp. Dạng log Cisco IOS
+`ADJCHG` cần mapping để bổ sung Area ID và local Router ID. Thiếu định danh, khớp
+nhiều link hoặc xung đột metadata khiến event chỉ đi vào Loki. Việc đổi scope,
+link ID hoặc chuyển từ theo dõi riêng sang mapping tạo identity khác cho event mới.
 
 ### Thứ tự sự kiện và recovery
 

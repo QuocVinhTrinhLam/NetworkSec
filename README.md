@@ -27,8 +27,10 @@ GNS3 / Loghub / Syslog Generator
   ACK, tham chiếu bằng chứng và trạng thái gửi Telegram.
 - Custom Dashboard FastAPI/Jinja dùng cho hàng đợi, ACK, Resolve và xuất CSV. Telegram chạy
   qua profile tùy chọn `notifications`.
-- OSPFv2 hỗ trợ Down, Full và các trạng thái trung gian từ fixture Cisco IOS và MikroTik
-  RouterOS v7. Hai góc nhìn dùng cùng một sự cố khi có mapping link. Xem
+- Topology lab dùng hai MikroTik CHR chạy RouterOS v7 và OSPFv2 Area 0, một switch
+  Cisco IOSvL2 và pfSense tùy chọn. Fixture mô phỏng kiểm tra Down, Full và các trạng
+  thái trung gian của hai CHR. Hai góc nhìn dùng cùng một sự cố khi mapping link khớp.
+  Xem [topology đã chốt](docs/architecture.md#topology-lab-đã-chốt) và
   [quy tắc tương quan](docs/correlation.md#định-danh-adjacency).
 - Không sử dụng Kafka, Redis hoặc Wazuh.
 
