@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import base64
-import binascii
 import json
+import re
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -19,6 +20,24 @@ from app.storage.base import (
     StorageError,
     StorageUnavailableError,
 )
+
+MAX_LOKI_ENTRIES = 5_000
+MAX_PAGE_QUERIES = 24
+EVENT_ID_PATTERN = re.compile(r"[0-9a-f]{64}")
+
+
+@dataclass(frozen=True, slots=True)
+class _Cursor:
+    timestamp_ns: int
+    before_id: str | None = None
+    seen_ids: frozenset[str] = frozenset()
+
+    def includes(self, timestamp_ns: int, event_id: str) -> bool:
+        if timestamp_ns != self.timestamp_ns:
+            return timestamp_ns < self.timestamp_ns
+        return event_id not in self.seen_ids and (
+            self.before_id is None or event_id < self.before_id
+        )
 
 
 class LokiLogStorage:
@@ -56,16 +75,72 @@ class LokiLogStorage:
             raise StorageError(f"Loki push failed with HTTP {response.status_code}")
 
     async def query_events(self, query: EventQuery) -> EventPage:
-        cursor_time, seen_ids = _decode_cursor(query.cursor)
-        end_ns = _to_ns(query.end)
-        if cursor_time is not None:
-            end_ns = min(end_ns, cursor_time + 1)
-        fetch_limit = min(5000, query.limit + len(seen_ids) + 1)
+        cursor = _decode_cursor(query.cursor)
+        start_ns, end_ns = _to_ns(query.start), _to_ns(query.end)
+        if cursor is not None:
+            if not start_ns <= cursor.timestamp_ns < end_ns:
+                raise InvalidCursorError("event pagination cursor is outside the query range")
+            # Loki excludes the end timestamp. Re-read the cursor's entire tie.
+            end_ns = cursor.timestamp_ns + 1
+
+        expression = _logql(query)
+        fetch_limit = min(MAX_LOKI_ENTRIES, query.limit + 1)
+        results: dict[str, tuple[int, NormalizedEvent]] = {}
+        for _ in range(MAX_PAGE_QUERIES):
+            count, oldest, candidates = await self._query_batch(
+                expression, start_ns, end_ns, fetch_limit
+            )
+            eligible = [
+                (at, event)
+                for at, event in candidates
+                if event.event_id not in results
+                and (cursor is None or cursor.includes(at, event.event_id))
+            ]
+            has_more = len(results) + len(eligible) > query.limit
+            if count < fetch_limit or oldest is None:
+                results.update((event.event_id, (at, event)) for at, event in eligible)
+                break
+
+            # A full Loki response can cut through the oldest timestamp. Its tie
+            # may contain IDs that sort ahead of the IDs we received.
+            complete = [(at, event) for at, event in eligible if at > oldest]
+            if has_more and len(results) + len(complete) >= query.limit:
+                results.update((event.event_id, (at, event)) for at, event in complete)
+                break
+            if fetch_limit < MAX_LOKI_ENTRIES:
+                fetch_limit = min(fetch_limit * 2, MAX_LOKI_ENTRIES)
+                continue
+            if oldest + 1 >= end_ns:
+                raise StorageError(
+                    "Loki pagination could not complete a timestamp at the entry limit"
+                )
+            results.update((event.event_id, (at, event)) for at, event in complete)
+            end_ns = oldest + 1
+        else:
+            raise StorageError("Loki pagination exceeded its query limit")
+
+        selected = list(results.values())[: query.limit]
+        next_cursor = None
+        if has_more and selected:
+            boundary, event = selected[-1]
+            legacy_ids = cursor.seen_ids if cursor and boundary == cursor.timestamp_ns else ()
+            next_cursor = _encode_cursor(
+                _Cursor(
+                    boundary,
+                    event.event_id,
+                    frozenset(key for key in legacy_ids if key < event.event_id),
+                )
+            )
+        return EventPage(tuple(event for _, event in selected), next_cursor)
+
+    async def _query_batch(
+        self, expression: str, start_ns: int, end_ns: int, limit: int
+    ) -> tuple[int, int | None, list[tuple[int, NormalizedEvent]]]:
         params = {
-            "query": _logql(query),
-            "start": str(_to_ns(query.start)),
+            "query": expression,
+            "start": str(start_ns),
             "end": str(end_ns),
-            "limit": str(fetch_limit),
+            "limit": str(limit),
             "direction": "backward",
         }
         response = await self._request("GET", "/loki/api/v1/query_range", params=params)
@@ -73,31 +148,16 @@ class LokiLogStorage:
             raise StorageError(f"Loki query failed with HTTP {response.status_code}")
         try:
             document = response.json()
-            if document.get("status") != "success":
+            if not isinstance(document, dict) or not isinstance(document.get("status"), str):
+                raise ValueError
+            if document["status"] != "success":
                 raise StorageError("Loki returned a non-success query status")
-            streams = document["data"]["result"]
-            candidates = _parse_streams(streams)
-        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-            raise StorageError("Loki returned an invalid query response") from exc
-
-        filtered = [
-            item
-            for item in candidates
-            if not (
-                cursor_time is not None and item[0] == cursor_time and item[1].event_id in seen_ids
-            )
-        ]
-        selected = filtered[: query.limit]
-        has_more = len(filtered) > query.limit
-        next_cursor = None
-        if has_more and selected:
-            boundary = selected[-1][0]
-            boundary_ids = set(seen_ids) if cursor_time == boundary else set()
-            boundary_ids.update(
-                event.event_id for timestamp, event in selected if timestamp == boundary
-            )
-            next_cursor = _encode_cursor(boundary, boundary_ids)
-        return EventPage(tuple(event for _, event in selected), next_cursor)
+            data = document.get("data")
+            if not isinstance(data, dict) or data.get("resultType", "streams") != "streams":
+                raise ValueError
+            return _parse_streams(data.get("result"))
+        except (ValueError, RecursionError):
+            raise StorageError("Loki returned an invalid query response") from None
 
     async def ready(self) -> bool:
         try:
@@ -119,6 +179,7 @@ class LokiLogStorage:
 def _logql(query: EventQuery) -> str:
     labels = ['job="network-events"']
     for name, value in (
+        ("schema_version", query.schema_version),
         ("severity", query.severity.value if query.severity else None),
         ("event_type", query.event_type.value if query.event_type else None),
         ("vendor", query.vendor.value if query.vendor else None),
@@ -129,6 +190,7 @@ def _logql(query: EventQuery) -> str:
     json_filters = (
         ("device_name", query.device_name),
         ("interface_name", query.interface_name),
+        ("event_id", query.event_id),
     )
     if any(value is not None for _, value in json_filters):
         expression += " | json"
@@ -138,25 +200,41 @@ def _logql(query: EventQuery) -> str:
     return expression
 
 
-def _parse_streams(streams: Any) -> list[tuple[int, NormalizedEvent]]:
+def _parse_streams(streams: Any) -> tuple[int, int | None, list[tuple[int, NormalizedEvent]]]:
     if not isinstance(streams, list):
         raise ValueError("Loki result must be a list")
-    parsed: list[tuple[int, NormalizedEvent]] = []
+    count = 0
+    oldest: int | None = None
+    unique: dict[str, tuple[int, NormalizedEvent]] = {}
     for stream in streams:
-        values = stream.get("values", []) if isinstance(stream, dict) else []
+        if not isinstance(stream, dict) or not isinstance(stream.get("stream", {}), dict):
+            raise ValueError("invalid Loki log stream")
+        values = stream.get("values")
+        if not isinstance(values, list):
+            raise ValueError("Loki log stream values must be a list")
         for value in values:
-            if not isinstance(value, list) or len(value) < 2:
-                continue
+            if (
+                not isinstance(value, list)
+                or len(value) < 2
+                or not all(isinstance(part, str) for part in value[:2])
+            ):
+                raise ValueError("invalid Loki log entry")
+            timestamp = int(value[0])
+            count += 1
+            oldest = timestamp if oldest is None else min(oldest, timestamp)
             try:
                 event = NormalizedEvent.model_validate_json(value[1])
-                parsed.append((int(value[0]), event))
             except (ValidationError, ValueError, TypeError):
                 continue
-    parsed.sort(key=lambda item: (item[0], item[1].event_id), reverse=True)
-    unique: dict[str, tuple[int, NormalizedEvent]] = {}
-    for item in parsed:
-        unique.setdefault(item[1].event_id, item)
-    return list(unique.values())
+            previous = unique.get(event.event_id)
+            if (
+                previous is None
+                or timestamp > previous[0]
+                or (timestamp == previous[0] and event.received_at < previous[1].received_at)
+            ):
+                unique[event.event_id] = timestamp, event
+    ordered = sorted(unique.values(), key=lambda item: (item[0], item[1].event_id), reverse=True)
+    return count, oldest, ordered
 
 
 def _to_ns(value: datetime) -> int:
@@ -165,31 +243,52 @@ def _to_ns(value: datetime) -> int:
     return seconds * 1_000_000_000 + utc_value.microsecond * 1000
 
 
-def _encode_cursor(timestamp_ns: int, seen_ids: set[str]) -> str:
-    value = json.dumps(
-        {"timestamp_ns": timestamp_ns, "seen_ids": sorted(seen_ids)},
-        separators=(",", ":"),
-    ).encode()
+def _encode_cursor(cursor: _Cursor) -> str:
+    payload: dict[str, int | str | None] = {
+        "timestamp_ns": cursor.timestamp_ns,
+        "before_id": cursor.before_id,
+    }
+    if cursor.seen_ids:
+        # Legacy cursors can have holes in their tie ordering. Carry just those
+        # old IDs, without growing the token as more pages are returned.
+        payload["seen_ids"] = "".join(sorted(cursor.seen_ids))
+    value = json.dumps(payload, separators=(",", ":")).encode()
     return base64.urlsafe_b64encode(value).decode().rstrip("=")
 
 
-def _decode_cursor(cursor: str | None) -> tuple[int | None, set[str]]:
+def _decode_cursor(cursor: str | None) -> _Cursor | None:
     if cursor is None:
-        return None, set()
+        return None
     try:
         padding = "=" * (-len(cursor) % 4)
-        value = json.loads(base64.urlsafe_b64decode(cursor + padding))
-        timestamp_ns = int(value["timestamp_ns"])
-        seen_ids = {str(item) for item in value["seen_ids"]}
-        if timestamp_ns < 0 or any(len(item) != 64 for item in seen_ids):
+        value = json.loads(base64.b64decode(cursor + padding, altchars=b"-_", validate=True))
+        timestamp_ns = value["timestamp_ns"]
+        if type(timestamp_ns) is not int or not 0 <= timestamp_ns < 2**63:
             raise ValueError
-        return timestamp_ns, seen_ids
-    except (
-        ValueError,
-        TypeError,
-        KeyError,
-        UnicodeDecodeError,
-        binascii.Error,
-        json.JSONDecodeError,
-    ) as exc:
+        if "before_id" not in value:
+            seen = value["seen_ids"]
+            if (
+                not isinstance(seen, list)
+                or not seen
+                or not all(isinstance(key, str) and EVENT_ID_PATTERN.fullmatch(key) for key in seen)
+            ):
+                raise ValueError
+            return _Cursor(timestamp_ns, seen_ids=frozenset(seen))
+
+        before_id = value["before_id"]
+        seen = value.get("seen_ids", "")
+        if (
+            not isinstance(before_id, str)
+            or not EVENT_ID_PATTERN.fullmatch(before_id)
+            or not isinstance(seen, str)
+            or len(seen) % 64
+            or (seen and not re.fullmatch(r"[0-9a-f]+", seen))
+        ):
+            raise ValueError
+        return _Cursor(
+            timestamp_ns,
+            before_id,
+            frozenset(seen[index : index + 64] for index in range(0, len(seen), 64)),
+        )
+    except (ValueError, TypeError, KeyError) as exc:
         raise InvalidCursorError("invalid event pagination cursor") from exc

@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from itertools import batched
 from pathlib import Path
 
 PROCESSOR_STATE_SCHEMA = """
@@ -111,6 +112,7 @@ class ProcessorStateStore:
                 VALUES (1, 'starting', ?)
                 ON CONFLICT(singleton) DO UPDATE SET
                     status = 'starting', heartbeat_at = excluded.heartbeat_at, detail = NULL
+                WHERE processor_health.status <> 'blocked'
                 """,
                 (now,),
             )
@@ -192,6 +194,20 @@ class ProcessorStateStore:
                 (now, now),
             )
 
+    def has_event_receipts(self, event_ids: Iterable[str]) -> bool:
+        """Check that processing completed for each event referenced by a projection."""
+        with self.connect() as connection:
+            for batch in batched(set(event_ids), 500):
+                placeholders = ", ".join("?" for _ in batch)
+                count = connection.execute(
+                    "SELECT COUNT(*) FROM processor_event_receipts "
+                    f"WHERE event_id IN ({placeholders})",
+                    batch,
+                ).fetchone()[0]
+                if count != len(batch):
+                    return False
+        return True
+
     def dead_letter(
         self, checkpoint: Checkpoint, record: bytes, reason: str, *, start_offset: int
     ) -> None:
@@ -244,26 +260,26 @@ class ProcessorStateStore:
                 (now, now, 1 if cursor.rowcount else 0),
             )
 
-    def heartbeat(self) -> None:
-        """Report an idle but healthy worker."""
+    def heartbeat(self, *, recovered_from: str | None = None) -> None:
+        """Refresh idle health or clear a specific block after recovery."""
         with self.connect() as connection:
             connection.execute(
                 """
                 UPDATE processor_health SET status = 'healthy', heartbeat_at = ?, detail = NULL
-                WHERE singleton = 1
+                WHERE singleton = 1 AND (status <> 'blocked' OR detail = ?)
                 """,
-                (_now(),),
+                (_now(), recovered_from),
             )
 
-    def mark_blocked(self, detail: str) -> None:
+    def mark_blocked(self, detail: str, *, preserve_existing: bool = False) -> None:
         """Expose a retryable processing failure without leaking record content."""
         with self.connect() as connection:
             connection.execute(
                 """
                 UPDATE processor_health SET status = 'blocked', heartbeat_at = ?, detail = ?
-                WHERE singleton = 1
+                WHERE singleton = 1 AND (NOT ? OR status <> 'blocked')
                 """,
-                (_now(), detail[:255]),
+                (_now(), detail[:255], preserve_existing),
             )
 
     def health(self) -> HealthSnapshot | None:

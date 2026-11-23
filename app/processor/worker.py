@@ -15,12 +15,14 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationErro
 
 from app.parsers.dispatcher import parse_syslog
 from app.processor.state import Checkpoint, FileIdentity, ProcessorStateStore
+from app.schemas.correlation import OspfCorrelationSnapshot
 from app.schemas.event import MAX_RAW_MESSAGE_BYTES, ParseStatus
 from app.services.correlation import CorrelationEngine
 from app.services.storage import StorageWriter
-from app.storage.base import LogStorage
+from app.storage.base import LogStorage, StorageError
 
 LOGGER = logging.getLogger(__name__)
+RECONCILIATION_FAILURE = "OSPF projection reconciliation failed"
 MAX_ENVELOPE_BYTES = 128 * 1024
 
 
@@ -81,12 +83,22 @@ class ProcessingWorker:
         self.source_timezone = source_timezone
         self.poll_interval_seconds = poll_interval_seconds
         self.retry_interval_seconds = retry_interval_seconds
+        self._ospf_reconciled = False
 
     async def process_once(self) -> bool:
         """Process one complete record; return false when the spool is currently idle."""
         record = self._read_next()
         if record is None:
-            self.state.heartbeat()
+            if not self._ospf_reconciled:
+                try:
+                    await self._reconcile_ospf()
+                except Exception:
+                    self.state.mark_blocked(RECONCILIATION_FAILURE, preserve_existing=True)
+                    raise
+                self._ospf_reconciled = True
+                self.state.heartbeat(recovered_from=RECONCILIATION_FAILURE)
+            else:
+                self.state.heartbeat()
             return False
         try:
             envelope = _decode_envelope(record.payload)
@@ -99,12 +111,16 @@ class ProcessingWorker:
             )
             return True
 
-        parsed = parse_syslog(
-            envelope.parse_message,
-            received_at=envelope.received_at,
-            source_timezone=self.source_timezone,
-            source_host=envelope.source_host or envelope.source_ip,
-        )
+        try:
+            parsed = parse_syslog(
+                envelope.parse_message,
+                received_at=envelope.received_at,
+                source_timezone=self.source_timezone,
+                source_host=envelope.source_host or envelope.source_ip,
+            )
+        except Exception as exc:
+            self.state.mark_blocked(f"{type(exc).__name__}: syslog parser failed")
+            raise
         if parsed.status is not ParseStatus.PARSED or parsed.event is None:
             reason = f"parse_{parsed.status.value}:{parsed.reason or 'unspecified'}"
             self.state.dead_letter(
@@ -119,6 +135,9 @@ class ProcessingWorker:
             correlation = await asyncio.to_thread(self.correlation.process, parsed.event)
             if correlation.matched and correlation.alert is not None:
                 await self.writer.persist(parsed.event, correlation.alert)
+            elif correlation.ospf is not None:
+                await self._require_ospf_receipts(correlation.ospf, parsed.event.event_id)
+                await self.writer.persist_ospf(parsed.event, correlation.ospf)
             else:
                 await self.logs.push_event(parsed.event)
         except Exception as exc:
@@ -133,6 +152,26 @@ class ProcessingWorker:
             envelope=record.payload,
         )
         return True
+
+    async def _require_ospf_receipts(
+        self, snapshot: OspfCorrelationSnapshot, current_event_id: str | None = None
+    ) -> None:
+        evidence_ids = (
+            event_id
+            for incident in snapshot.incidents
+            for event_id in incident.event_ids
+            if event_id != current_event_id
+        )
+        if not await asyncio.to_thread(self.state.has_event_receipts, evidence_ids):
+            raise StorageError("OSPF projection references events without processor receipts")
+
+    async def _reconcile_ospf(self) -> None:
+        """Publish already-processed Phase 2 journal state after upgrade or restart."""
+        store = self.correlation.store
+        for adjacency in await asyncio.to_thread(store.list_ospf_adjacencies):
+            snapshot = await asyncio.to_thread(store.ospf_snapshot, adjacency)
+            await self._require_ospf_receipts(snapshot)
+            await self.writer.reconcile_ospf(snapshot)
 
     async def run_forever(self, stop: asyncio.Event | None = None) -> None:
         """Retry the same uncheckpointed record until shutdown or downstream recovery."""

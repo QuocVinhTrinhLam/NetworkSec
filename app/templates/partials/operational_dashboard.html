@@ -1,0 +1,36 @@
+<section class="queue-summary" aria-label="Alert queue summary">
+  <a class="queue-stat queue-stat-new" href="/alerts?status=new">
+    <span>New</span><strong>{{ queue_summary.new }}</strong><small>Awaiting acknowledgment</small>
+  </a>
+  <a class="queue-stat" href="/alerts?status=acknowledged">
+    <span>Acknowledged</span><strong>{{ queue_summary.acknowledged }}</strong><small>Open</small>
+  </a>
+  <div class="queue-stat queue-stat-critical">
+    <span>High priority</span><strong>{{ queue_summary.high_priority }}</strong><small>Open critical or high</small>
+  </div>
+  <div class="queue-stat">
+    <span>Resolved</span><strong>{{ queue_summary.recently_resolved }}</strong><small>Last 24 hours by closure</small>
+  </div>
+</section>
+
+<section class="panel evidence-panel">
+  <header class="panel-heading">
+    <h2>Recent alerts</h2>
+    <a class="text-link" href="/alerts">Open alert queue <span aria-hidden="true">→</span></a>
+  </header>
+  <div class="alert-feed">
+    {% for alert in recent_alerts %}
+    <a class="alert-row alert-{{ alert.severity }}" href="/alerts/{{ alert.id }}">
+      <span class="feed-severity severity-bg-{{ alert.severity }}" aria-hidden="true"></span>
+      <span class="alert-main">
+        <span><span class="badge severity-{{ alert.severity }}">{{ alert.severity }}</span><strong>{{ alert.rule_description }}</strong></span>
+        <small>{{ alert.status | title }} · {{ alert.neighbor or alert.device_name }} · {{ alert.count }} events</small>
+      </span>
+      <time datetime="{{ alert.timestamp }}">{{ alert.timestamp[11:16] }}<span>{{ alert.timestamp[0:10] }}</span></time>
+      <span class="row-arrow" aria-hidden="true">→</span>
+    </a>
+    {% else %}
+    <div class="empty-state"><strong>No alerts in the queue</strong></div>
+    {% endfor %}
+  </div>
+</section>

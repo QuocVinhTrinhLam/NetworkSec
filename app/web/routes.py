@@ -6,11 +6,14 @@ import csv
 import io
 import math
 from datetime import UTC, datetime, timedelta
+from ipaddress import ip_address
 from typing import Annotated, Any
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from app.config import Settings
@@ -19,8 +22,31 @@ from app.models import AttackScenario
 from app.schemas.api import AlertLifecycleStatus, AlertRecord
 from app.schemas.event import EventSeverity, EventType, EventVendor
 from app.services.catalog import RulesCatalog
-from app.storage.base import AlertQuery, AlertStateStorage, EventQuery, LogStorage, StorageError
+from app.storage.base import (
+    AlertListMetadata,
+    AlertPage,
+    AlertQuery,
+    AlertQueueSummary,
+    AlertStateStorage,
+    EventQuery,
+    LogStorage,
+    StorageError,
+)
 from app.web.auth import csrf_token, require_user, validate_csrf, verify_password
+
+CSV_ALERT_LIMIT = 5000
+
+
+class AlertFilters(BaseModel):
+    time_range: str = "24"
+    severity: str = Field("", max_length=20)
+    device: str = Field("", max_length=255)
+    rule_id: str = Field("", max_length=64)
+    source_ip: str = Field("", max_length=64)
+    search: str = Field("", max_length=200)
+    event_type: str = Field("", max_length=64)
+    status: str = Field("", max_length=32)
+    page: int = Field(1, ge=1)
 
 
 def csv_safe_row(row: dict[str, Any], fields: list[str]) -> dict[str, Any]:
@@ -76,15 +102,20 @@ def create_router(
         start = datetime(1970, 1, 1, tzinfo=UTC) if hours is None else end - timedelta(hours=hours)
         return start, end
 
-    def alert_view(alert: AlertRecord) -> dict[str, Any]:
+    def alert_view(alert: AlertRecord, metadata: AlertListMetadata) -> dict[str, Any]:
+        adjacency = metadata.adjacency
+        neighbor = " ↔ ".join(map(str, adjacency.router_ids)) if adjacency else None
         return {
             "id": alert.aggregate_id,
             "timestamp": alert.last_seen.isoformat(),
             "severity": alert.severity.value,
-            "device_name": alert.device_name or "Unknown device",
+            "device_name": alert.device_name or ("Router IDs" if neighbor else "Unknown device"),
             "device_type": "network device",
             "interface": alert.interface_name,
-            "source_ip": None,
+            "source_ip": ", ".join(metadata.source_ips),
+            "neighbor": neighbor,
+            "ospf_area": str(adjacency.area) if adjacency else None,
+            "link_id": adjacency.link_id if adjacency else None,
             "dest_ip": None,
             "username": None,
             "rule_id": alert.rule_id,
@@ -96,33 +127,57 @@ def create_router(
             "first_seen": alert.first_seen.isoformat(),
             "last_seen": alert.last_seen.isoformat(),
             "status": alert.status.value,
-            "acknowledged": alert.status is AlertLifecycleStatus.ACKNOWLEDGED,
+            "acknowledged": alert.acknowledged_at is not None
+            or alert.status is AlertLifecycleStatus.ACKNOWLEDGED,
             "acknowledged_by": alert.acknowledged_by,
             "acknowledged_at": (
                 alert.acknowledged_at.isoformat() if alert.acknowledged_at else None
             ),
-            "raw_log": "Raw events are available from the normalized event view and Loki.",
+            "note": alert.note,
             "mitre_id": None,
             "mitre_name": None,
             "use_case_id": None,
             "recommended_response": None,
         }
 
-    async def operational_dashboard_data() -> tuple[
-        dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]
-    ]:
+    def queue_rows(result: AlertPage) -> list[dict[str, Any]]:
+        return [
+            alert_view(item, result.metadata.get(item.aggregate_id, AlertListMetadata()))
+            for item in result.items
+        ]
+
+    async def operational_queue(filters: AlertFilters, page_size: int, page: int) -> AlertPage:
+        start, end = time_window(filters.time_range)
+        return await run_in_threadpool(
+            alert_states.query_alerts,
+            AlertQuery(
+                start=start,
+                end=end,
+                page=page,
+                page_size=page_size,
+                severity=EventSeverity(filters.severity) if filters.severity else None,
+                status=AlertLifecycleStatus(filters.status).value if filters.status else None,
+                event_type=EventType(filters.event_type) if filters.event_type else None,
+                device_name=filters.device or None,
+                include_active_before_start=filters.time_range == "24",
+                rule_id=filters.rule_id or None,
+                source_ip=(
+                    str(ip_address(ip_address(filters.source_ip).packed))
+                    if filters.source_ip
+                    else None
+                ),
+                search=filters.search.strip() or None,
+            ),
+        )
+
+    async def operational_dashboard_data() -> tuple[AlertQueueSummary, list[dict[str, Any]]]:
         start, end = time_window("24")
-        stats = await run_in_threadpool(alert_states.dashboard_stats, start, end)
+        summary = await run_in_threadpool(alert_states.queue_summary, start, end)
         alert_page = await run_in_threadpool(
             alert_states.query_alerts,
-            AlertQuery(start=start, end=end, page=1, page_size=6),
+            AlertQuery(start=start, end=end, page=1, page_size=6, include_active_before_start=True),
         )
-        event_page = await logs.query_events(EventQuery(start=start, end=end, limit=6))
-        return (
-            stats,
-            [alert_view(item) for item in alert_page.items],
-            [item.model_dump(mode="json") for item in event_page.items],
-        )
+        return summary, queue_rows(alert_page)
 
     @router.get("/health")
     async def health() -> dict[str, Any]:
@@ -140,7 +195,7 @@ def create_router(
         request: Request,
         username: Annotated[str, Form(max_length=100)],
         password: Annotated[str, Form(max_length=1024)],
-        csrf: Annotated[str, Form()],
+        csrf: Annotated[str, Form()] = "",
     ) -> Response:
         validate_csrf(request, csrf)
         if username != settings.admin_username or not verify_password(
@@ -160,8 +215,8 @@ def create_router(
     @router.post("/logout")
     async def logout(
         request: Request,
-        csrf: Annotated[str, Form()],
         _user: Annotated[str, Depends(require_user)],
+        csrf: Annotated[str, Form()] = "",
     ) -> Response:
         validate_csrf(request, csrf)
         request.session.clear()
@@ -176,26 +231,8 @@ def create_router(
         request: Request,
         _user: Annotated[str, Depends(require_user)],
     ) -> Response:
-        if operational:
-            try:
-                stats, recent_alerts, recent_events = await operational_dashboard_data()
-            except StorageError as error:
-                raise HTTPException(
-                    status_code=503, detail="Operational storage unavailable"
-                ) from error
-        else:
-            recent_alerts, _ = database.search_alerts(hours=24, page_size=6)
-            stats = database.dashboard_stats()
-            recent_events = []
         return templates.TemplateResponse(
-            request,
-            "dashboard.html",
-            context(
-                request,
-                stats=stats,
-                recent_alerts=recent_alerts,
-                recent_events=recent_events,
-            ),
+            request, "dashboard.html", await dashboard_context(request)
         )
 
     @router.get("/partials/dashboard", response_class=HTMLResponse)
@@ -203,26 +240,22 @@ def create_router(
         request: Request,
         _user: Annotated[str, Depends(require_user)],
     ) -> Response:
+        return templates.TemplateResponse(
+            request, "partials/dashboard_content.html", await dashboard_context(request)
+        )
+
+    async def dashboard_context(request: Request) -> dict[str, Any]:
         if operational:
             try:
-                stats, recent_alerts, recent_events = await operational_dashboard_data()
+                summary, recent_alerts = await operational_dashboard_data()
             except StorageError as error:
                 raise HTTPException(
                     status_code=503, detail="Operational storage unavailable"
                 ) from error
-        else:
-            recent_alerts, _ = database.search_alerts(hours=24, page_size=6)
-            stats = database.dashboard_stats()
-            recent_events = []
-        return templates.TemplateResponse(
-            request,
-            "partials/dashboard_content.html",
-            context(
-                request,
-                stats=stats,
-                recent_alerts=recent_alerts,
-                recent_events=recent_events,
-            ),
+            return context(request, queue_summary=summary, recent_alerts=recent_alerts)
+        recent_alerts, _ = database.search_alerts(hours=24, page_size=6)
+        return context(
+            request, stats=database.dashboard_stats(), recent_alerts=recent_alerts, recent_events=[]
         )
 
     def parse_hours(value: str) -> int | None:
@@ -232,67 +265,32 @@ def create_router(
     async def alerts(
         request: Request,
         _user: Annotated[str, Depends(require_user)],
-        time_range: str = Query("24"),
-        severity: str = Query("", max_length=20),
-        device: str = Query("", max_length=255),
-        rule_id: str = Query("", max_length=64),
-        source_ip: str = Query("", max_length=64),
-        search: str = Query("", max_length=200),
-        event_type: str = Query("", max_length=64),
-        alert_status: str = Query("", alias="status", max_length=32),
-        page: int = Query(1, ge=1),
+        filters: Annotated[AlertFilters, Query()],
     ) -> Response:
         try:
-            hours = parse_hours(time_range)
-        except ValueError as error:
-            raise HTTPException(status_code=422, detail="Invalid time range") from error
-        if operational:
-            try:
-                severity_filter = EventSeverity(severity) if severity else None
-                event_filter = EventType(event_type) if event_type else None
-                status_filter = AlertLifecycleStatus(alert_status).value if alert_status else None
-                start, end = time_window(time_range)
-                result = await run_in_threadpool(
-                    alert_states.query_alerts,
-                    AlertQuery(
-                        start=start,
-                        end=end,
-                        page=page,
-                        page_size=25,
-                        severity=severity_filter,
-                        status=status_filter,
-                        event_type=event_filter,
-                        device_name=device or None,
-                    ),
-                )
-                rows = [alert_view(item) for item in result.items]
+            if operational:
+                result = await operational_queue(filters, 25, filters.page)
+                rows = queue_rows(result)
                 total = result.total
-            except ValueError as error:
-                raise HTTPException(status_code=422, detail="Invalid alert filter") from error
-            except StorageError as error:
-                raise HTTPException(
-                    status_code=503, detail="Operational storage unavailable"
-                ) from error
-        else:
-            rows, total = database.search_alerts(
-                hours=hours,
-                severity=severity,
-                device=device,
-                rule_id=rule_id,
-                source_ip=source_ip,
-                search=search,
-                page=page,
-            )
-        filters = {
-            "time_range": time_range,
-            "severity": severity,
-            "device": device,
-            "rule_id": rule_id,
-            "source_ip": source_ip,
-            "search": search,
-            "event_type": event_type,
-            "status": alert_status,
-        }
+            else:
+                rows, total = database.search_alerts(
+                    hours=parse_hours(filters.time_range),
+                    severity=filters.severity,
+                    device=filters.device,
+                    rule_id=filters.rule_id,
+                    source_ip=filters.source_ip,
+                    search=filters.search,
+                    page=filters.page,
+                )
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail="Invalid alert filter") from error
+        except StorageError as error:
+            raise HTTPException(
+                status_code=503, detail="Operational storage unavailable"
+            ) from error
+        filter_query = urlencode(
+            {key: value for key, value in filters.model_dump(exclude={"page"}).items() if value}
+        )
         return templates.TemplateResponse(
             request,
             "alerts.html",
@@ -300,35 +298,42 @@ def create_router(
                 request,
                 alerts=rows,
                 total=total,
-                page=page,
+                page=filters.page,
                 pages=max(1, math.ceil(total / 25)),
                 filters=filters,
+                filter_query=filter_query,
+                event_types=tuple(EventType),
             ),
         )
 
     @router.get("/alerts/export.csv")
     async def export_alerts(
         _user: Annotated[str, Depends(require_user)],
-        time_range: str = Query("24"),
-        severity: str = Query("", max_length=20),
-        device: str = Query("", max_length=255),
-        rule_id: str = Query("", max_length=64),
-        source_ip: str = Query("", max_length=64),
-        search: str = Query("", max_length=200),
+        filters: Annotated[AlertFilters, Query()],
     ) -> Response:
+        headers = {"Content-Disposition": "attachment; filename=alerts.csv"}
         try:
-            hours = parse_hours(time_range)
+            if operational:
+                result = await operational_queue(filters, CSV_ALERT_LIMIT, 1)
+                rows = queue_rows(result)
+                if result.total > len(rows):
+                    headers["X-Export-Truncated"] = "true"
+            else:
+                rows, _ = database.search_alerts(
+                    hours=parse_hours(filters.time_range),
+                    severity=filters.severity,
+                    device=filters.device,
+                    rule_id=filters.rule_id,
+                    source_ip=filters.source_ip,
+                    search=filters.search,
+                    page_size=CSV_ALERT_LIMIT,
+                )
         except ValueError as error:
-            raise HTTPException(status_code=422, detail="Invalid time range") from error
-        rows, _ = database.search_alerts(
-            hours=hours,
-            severity=severity,
-            device=device,
-            rule_id=rule_id,
-            source_ip=source_ip,
-            search=search,
-            page_size=5000,
-        )
+            raise HTTPException(status_code=422, detail="Invalid alert filter") from error
+        except StorageError as error:
+            raise HTTPException(
+                status_code=503, detail="Operational storage unavailable"
+            ) from error
         output = io.StringIO()
         fields = [
             "id",
@@ -342,13 +347,26 @@ def create_router(
             "rule_description",
             "acknowledged",
         ]
+        if operational:
+            fields.extend(
+                [
+                    "event_type",
+                    "neighbor",
+                    "ospf_area",
+                    "status",
+                    "first_seen",
+                    "last_seen",
+                    "acknowledged_by",
+                    "acknowledged_at",
+                ]
+            )
         writer = csv.DictWriter(output, fieldnames=fields, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(csv_safe_row(row, fields) for row in rows)
         return Response(
             output.getvalue(),
             media_type="text/csv",
-            headers={"Content-Disposition": "attachment; filename=alerts.csv"},
+            headers=headers,
         )
 
     @router.get("/alerts/{alert_id}", response_class=HTMLResponse)
@@ -357,14 +375,27 @@ def create_router(
         request: Request,
         _user: Annotated[str, Depends(require_user)],
     ) -> Response:
+        evidence = None
         if operational:
             try:
-                record = await run_in_threadpool(alert_states.get_alert, alert_id)
+                evidence = await run_in_threadpool(alert_states.get_alert_evidence, alert_id)
             except StorageError as error:
                 raise HTTPException(
                     status_code=503, detail="Operational storage unavailable"
                 ) from error
-            alert = alert_view(record) if record else None
+            alert = (
+                alert_view(
+                    evidence.alert,
+                    AlertListMetadata(
+                        evidence.ospf.adjacency if evidence.ospf else None,
+                        tuple(
+                            sorted({ref.source_ip for ref in evidence.event_refs if ref.source_ip})
+                        ),
+                    ),
+                )
+                if evidence
+                else None
+            )
         else:
             alert = database.get_alert(alert_id)
         if not alert:
@@ -379,21 +410,22 @@ def create_router(
                 "recommended_response": catalog_entry.recommended_response_for("vi"),
             }
         return templates.TemplateResponse(
-            request, "alert_detail.html", context(request, alert=alert)
+            request, "alert_detail.html", context(request, alert=alert, evidence=evidence)
         )
 
     @router.post("/alerts/{alert_id}/ack")
     async def acknowledge_alert(
         alert_id: str,
         request: Request,
-        csrf: Annotated[str, Form()],
         user: Annotated[str, Depends(require_user)],
+        csrf: Annotated[str, Form()] = "",
+        note: Annotated[str | None, Form(max_length=1000)] = None,
     ) -> Response:
         validate_csrf(request, csrf)
         if operational:
             try:
                 acknowledged = await run_in_threadpool(
-                    alert_states.acknowledge, alert_id, user, None
+                    alert_states.acknowledge, alert_id, user, note or None
                 )
             except StorageError as error:
                 raise HTTPException(
@@ -402,6 +434,33 @@ def create_router(
             if acknowledged is None:
                 raise HTTPException(status_code=404, detail="Alert not found")
         elif not database.acknowledge(alert_id, user):
+            raise HTTPException(status_code=404, detail="Alert not found")
+        return RedirectResponse(f"/alerts/{alert_id}", status_code=status.HTTP_303_SEE_OTHER)
+
+    @router.post("/alerts/{alert_id}/resolve")
+    async def resolve_alert(
+        alert_id: str,
+        request: Request,
+        user: Annotated[str, Depends(require_user)],
+        csrf: Annotated[str, Form()] = "",
+        note: Annotated[str | None, Form(max_length=1000)] = None,
+    ) -> Response:
+        validate_csrf(request, csrf)
+        if not operational:
+            raise HTTPException(status_code=404, detail="Alert not found")
+        try:
+            resolved = await run_in_threadpool(
+                alert_states.update_status,
+                alert_id,
+                AlertLifecycleStatus.RESOLVED,
+                user,
+                note or None,
+            )
+        except StorageError as error:
+            raise HTTPException(
+                status_code=503, detail="Operational storage unavailable"
+            ) from error
+        if resolved is None:
             raise HTTPException(status_code=404, detail="Alert not found")
         return RedirectResponse(f"/alerts/{alert_id}", status_code=status.HTTP_303_SEE_OTHER)
 
@@ -415,6 +474,8 @@ def create_router(
         event_type: str = Query("", max_length=64),
         vendor: str = Query("", max_length=64),
         cursor: str | None = Query(None, max_length=65536),
+        event_id: Annotated[str | None, Query(pattern=r"^[0-9a-f]{64}$")] = None,
+        event_at: datetime | None = None,
     ) -> Response:
         if not operational:
             return templates.TemplateResponse(
@@ -434,7 +495,12 @@ def create_router(
                 ),
             )
         try:
-            start, end = time_window(time_range)
+            if event_id is not None or event_at is not None:
+                if event_id is None or event_at is None or event_at.utcoffset() is None:
+                    raise ValueError("event_id and a timezone-aware event_at are required")
+                start, end = event_at, event_at + timedelta(seconds=1)
+            else:
+                start, end = time_window(time_range)
             result = await logs.query_events(
                 EventQuery(
                     start=start,
@@ -445,9 +511,10 @@ def create_router(
                     event_type=EventType(event_type) if event_type else None,
                     vendor=EventVendor(vendor) if vendor else None,
                     device_name=device or None,
+                    event_id=event_id,
                 )
             )
-        except ValueError as error:
+        except (ValueError, OverflowError) as error:
             raise HTTPException(status_code=422, detail="Invalid event filter") from error
         except StorageError as error:
             raise HTTPException(
@@ -459,7 +526,8 @@ def create_router(
             context(
                 request,
                 events=[item.model_dump(mode="json") for item in result.items],
-                next_cursor=result.next_cursor,
+                next_cursor=result.next_cursor if event_id is None else None,
+                evidence_event_id=event_id,
                 filters={
                     "time_range": time_range,
                     "severity": severity,
@@ -499,10 +567,10 @@ def create_router(
     @router.post("/scenarios")
     async def add_scenario(
         request: Request,
-        csrf: Annotated[str, Form()],
         technique: Annotated[str, Form(max_length=255)],
         tool: Annotated[str, Form(max_length=255)],
         expected_rule: Annotated[str, Form(max_length=255)],
+        csrf: Annotated[str, Form()] = "",
         detected: Annotated[bool, Form()] = False,
         detection_time_seconds: Annotated[float | None, Form(ge=0)] = None,
         notes: Annotated[str, Form(max_length=2000)] = "",

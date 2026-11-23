@@ -18,12 +18,21 @@
       <span class="badge severity-{{ alert.severity }}">{{ alert.severity }}</span>
       <span class="state-pill state-{{ alert.status }}"><span></span>{{ alert.status | title }}</span>
     </div>
-    {% if alert.status == 'new' %}
+    {% if operational and alert.status != 'resolved' %}
+    <form class="stack" method="post" action="/alerts/{{ alert.id }}/{{ 'ack' if alert.status == 'new' else 'resolve' }}">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <label><span>Operator note (optional)</span><input name="note" maxlength="1000"></label>
+      <div>
+        {% if alert.status == 'new' %}<button class="primary" type="submit">Acknowledge alert</button>{% endif %}
+        <button class="button" type="submit" formaction="/alerts/{{ alert.id }}/resolve">Resolve alert</button>
+      </div>
+    </form>
+    {% elif not operational and alert.status == 'new' %}
     <form method="post" action="/alerts/{{ alert.id }}/ack">
       <input type="hidden" name="csrf" value="{{ csrf_token }}">
       <button class="primary" type="submit">Acknowledge alert</button>
     </form>
-    {% elif alert.status == 'acknowledged' %}
+    {% elif not operational and alert.status == 'acknowledged' %}
     <p class="acknowledged-meta">Acknowledged by <strong>{{ alert.acknowledged_by }}</strong><br><time datetime="{{ alert.acknowledged_at }}">{{ alert.acknowledged_at[0:10] }} at {{ alert.acknowledged_at[11:19] }}</time></p>
     {% endif %}
   </div>
@@ -41,14 +50,23 @@
         <div><dt>Last seen</dt><dd><time datetime="{{ alert.last_seen if alert.last_seen is defined else alert.timestamp }}">{{ (alert.last_seen if alert.last_seen is defined else alert.timestamp)[0:19] }}</time></dd></div>
         <div><dt>Status</dt><dd>{{ alert.status | title }}</dd></div>
         <div><dt>Source IP</dt><dd><code>{{ alert.source_ip or 'Unknown' }}</code></dd></div>
+        {% if operational %}
+        <div><dt>Acknowledgment</dt><dd>{% if alert.acknowledged_by %}{{ alert.acknowledged_by }}{% if alert.acknowledged_at %} · <time datetime="{{ alert.acknowledged_at }}">{{ alert.acknowledged_at[:19] }}</time>{% endif %}{% else %}{{ 'Acknowledged' if alert.acknowledged else 'Not acknowledged' }}{% endif %}</dd></div>
+        <div><dt>Operator note</dt><dd>{{ alert.note or '—' }}</dd></div>
+        <div><dt>Interface</dt><dd>{{ alert.interface or '—' }}</dd></div>
+        {% else %}
         <div><dt>Destination IP</dt><dd><code>{{ alert.dest_ip or 'Unknown' }}</code></dd></div>
         <div><dt>User</dt><dd>{{ alert.username or 'Not identified' }}</dd></div>
         <div><dt>Asset</dt><dd>{{ alert.device_name }}</dd></div>
         <div><dt>Asset type</dt><dd>{{ alert.device_type | title }}</dd></div>
         <div><dt>Observed</dt><dd><time datetime="{{ alert.timestamp }}">{{ alert.timestamp[0:10] }} {{ alert.timestamp[11:19] }}</time></dd></div>
+        {% endif %}
       </dl>
     </section>
 
+    {% if operational %}
+    {% include "partials/alert_evidence.html" %}
+    {% else %}
     <section class="panel raw-log-panel" aria-labelledby="raw-log-title">
       <header class="section-heading">
         <div><p class="panel-kicker">Original telemetry</p><h2 id="raw-log-title">Raw event</h2></div>
@@ -56,6 +74,7 @@
       </header>
       <pre><code>{{ alert.raw_log }}</code></pre>
     </section>
+    {% endif %}
   </div>
 
   <aside class="detail-aside" aria-label="Investigation context">

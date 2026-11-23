@@ -1,3 +1,6 @@
+{% if operational %}
+{% include "partials/operational_dashboard.html" %}
+{% else %}
 {% set critical = stats.severity | selectattr('label', 'equalto', 'critical') | first %}
 {% set high = stats.severity | selectattr('label', 'equalto', 'high') | first %}
 {% set medium = stats.severity | selectattr('label', 'equalto', 'medium') | first %}
@@ -126,3 +129,4 @@
 </div>
 
 <script type="application/json" id="dashboard-data">{{ stats | tojson }}</script>
+{% endif %}

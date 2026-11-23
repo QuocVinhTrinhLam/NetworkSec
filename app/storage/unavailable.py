@@ -6,9 +6,15 @@ from datetime import datetime
 from typing import Any
 
 from app.schemas.api import AlertRecord
-from app.schemas.correlation import AggregatedAlert
+from app.schemas.correlation import AggregatedAlert, OspfCorrelationSnapshot
 from app.schemas.event import EventSeverity, NormalizedEvent
-from app.storage.base import AlertPage, AlertQuery, StorageUnavailableError
+from app.storage.base import (
+    AlertEvidence,
+    AlertPage,
+    AlertQuery,
+    AlertQueueSummary,
+    StorageUnavailableError,
+)
 
 
 class UnavailableAlertStorage:
@@ -18,10 +24,19 @@ class UnavailableAlertStorage:
     def upsert_alert(self, alert: AggregatedAlert, event: NormalizedEvent) -> AlertRecord:
         raise StorageUnavailableError("PostgreSQL is not configured")
 
+    def apply_ospf_snapshot(self, snapshot: OspfCorrelationSnapshot) -> bool:
+        raise StorageUnavailableError("PostgreSQL is not configured")
+
     def query_alerts(self, query: AlertQuery) -> AlertPage:
         raise StorageUnavailableError("PostgreSQL is not configured")
 
     def get_alert(self, aggregate_id: str) -> AlertRecord | None:
+        raise StorageUnavailableError("PostgreSQL is not configured")
+
+    def get_alert_evidence(self, aggregate_id: str) -> AlertEvidence | None:
+        raise StorageUnavailableError("PostgreSQL is not configured")
+
+    def queue_summary(self, start: datetime, end: datetime) -> AlertQueueSummary:
         raise StorageUnavailableError("PostgreSQL is not configured")
 
     def acknowledge(self, aggregate_id: str, actor: str, note: str | None) -> AlertRecord | None:

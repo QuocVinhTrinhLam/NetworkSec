@@ -39,17 +39,20 @@ write không được parse hoặc checkpoint. Envelope tối đa 128 KiB để 
 
 `processor-state.db` lưu identity file `(device, inode)` và byte offset. Với parsed event, thứ tự commit là:
 
-1. correlation SQLite ghi membership/aggregate theo `event_id`;
+1. correlation SQLite ghi membership link-state hoặc journal OSPF theo `event_id`;
 2. Loki nhận normalized event;
-3. PostgreSQL upsert aggregate và `alert_event_refs`;
+3. PostgreSQL upsert aggregate link-state và `alert_event_refs`, hoặc áp dụng một revision OSPF gồm incident, evidence và lifecycle;
 4. processor ghi receipt `event_id` cùng inode/byte range rồi advance checkpoint trong một transaction.
 
 Nếu lỗi ở bước 1–3, checkpoint giữ nguyên. Retry có thể tạo physical delivery lặp ở Loki, nhưng
 `event_id` làm correlation và PostgreSQL idempotent; Loki query adapter cũng loại trùng theo `event_id`.
 Đây là at-least-once delivery với exactly-once logic, không phải distributed transaction.
 
-Restart đọc lại offset từ volume `processor-state`. Crash sau bước 3 nhưng trước bước 4 sẽ replay an toàn.
-Chỉ một processor được phép active trên một spool; Compose không scale service này.
+Restart đọc lại offset từ volume `processor-state`. Crash sau bước 3 nhưng trước bước 4 sẽ replay an toàn. OSPF dùng cùng `event_id` khi retry ghi Loki và conditional upsert chặn PostgreSQL áp dụng cùng revision lần nữa. Khi lỗi PostgreSQL xảy ra sau khi Loki đã ghi, receipt và offset vẫn chưa tiến.
+
+Lần đầu spool rảnh sau khi khởi động, worker đối soát các adjacency đã journal trong Phase 2. Chỉ snapshot có đủ receipt cho evidence mới được áp dụng. Đường xử lý trực tiếp cũng yêu cầu receipt cho bằng chứng cũ, với event hiện tại được ghi Loki trước PostgreSQL. Nếu thiếu receipt, xử lý báo blocked để tránh publish evidence chưa đi qua pipeline. Giữ `processor-state.db` và `correlation.db` nhất quán khi restore.
+
+Compose chạy một processor active trên một spool. Nếu restore journal về revision cũ hơn PostgreSQL, đối soát bằng backup thống nhất và replay bản gốc để giữ thứ tự revision và incident ID.
 
 ## Dead-letter strategy
 
@@ -89,7 +92,7 @@ Không dùng `docker compose down -v`, không sửa SQLite trực tiếp và kh�
 ## Acceptance tests
 
 Unit/component tests chạy không cần Docker và cover 100-event aggregation, replay, restart, storage failure,
-partial record, DLQ và Telegram cooldown claim. Live test là opt-in:
+partial record, DLQ và Telegram cooldown claim. Test worker OSPF mô phỏng Loki lỗi trước khi PostgreSQL ghi, PostgreSQL lỗi sau khi Loki ghi, retry cùng offset và import journal đã checkpoint. [Test PostgreSQL độc lập](storage.md#migration-và-rollback) kiểm tra migration, rollback, concurrent snapshot, stale/repeated Full và việc giữ quyết định operator. Test stack Compose là opt-in:
 
 ```bash
 docker compose up -d --build --wait postgres loki rsyslog processor dashboard

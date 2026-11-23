@@ -2,15 +2,26 @@
 {% block title %}Normalized events · {{ app_name }}{% endblock %}
 {% block content %}
 <header class="page-heading alert-queue-heading">
-  <div><p class="eyebrow">Operational telemetry</p><h1>Normalized events</h1><p class="muted">Search immutable NormalizedEvent 1.0 records stored in Loki.</p></div>
+  <div><p class="eyebrow">Operational telemetry</p><h1>Normalized events</h1><p class="muted">Search immutable NormalizedEvent records stored in Loki.</p></div>
 </header>
 
+{% if evidence_event_id %}
+<section class="panel raw-log-panel" aria-label="Event evidence">
+  <header class="section-heading"><h2>Event evidence</h2><a class="text-link" href="/events">Browse event stream</a></header>
+  {% for event in events %}
+  <p><code>{{ event.event_id }}</code> · {{ event.timestamp }}</p>
+  <pre><code>{{ event.raw_message }}</code></pre>
+  {% else %}
+  <p>No matching event is available in Loki.</p>
+  {% endfor %}
+</section>
+{% else %}
 <form class="alert-filters panel" method="get">
   <div class="filter-main event-filter-grid">
     <label><span>Device</span><input name="device" value="{{ filters.device }}" placeholder="e.g. core-sw-01"></label>
     <label><span>Time range</span><select name="time_range">{% for value, label in [('1','Last hour'),('24','Last 24 hours'),('168','Last 7 days')] %}<option value="{{ value }}" {% if filters.time_range == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
     <label><span>Severity</span><select name="severity"><option value="">All severities</option>{% for value in ['critical','high','medium','low'] %}<option value="{{ value }}" {% if filters.severity == value %}selected{% endif %}>{{ value | title }}</option>{% endfor %}</select></label>
-    <label><span>Event type</span><select name="event_type"><option value="">All event types</option>{% for value in ['link_up','link_down','port_flap','routing_neighbor_down','configuration_change','login_failure','acl_deny','port_security'] %}<option value="{{ value }}" {% if filters.event_type == value %}selected{% endif %}>{{ value | replace('_',' ') | title }}</option>{% endfor %}</select></label>
+    <label><span>Event type</span><select name="event_type"><option value="">All event types</option>{% for value in ['link_up','link_down','port_flap','routing_neighbor_down','routing_neighbor_up','routing_neighbor_state_change','configuration_change','login_failure','acl_deny','port_security'] %}<option value="{{ value }}" {% if filters.event_type == value %}selected{% endif %}>{{ value | replace('_',' ') | title }}</option>{% endfor %}</select></label>
     <button class="primary filter-submit" type="submit">Apply filters</button>
   </div>
 </form>
@@ -23,4 +34,5 @@
   </tbody></table></div>
 </section>
 {% if next_cursor %}<nav class="pagination queue-pagination" aria-label="Event pages"><span>More events available</span><a class="button" href="?time_range={{ filters.time_range | urlencode }}&amp;severity={{ filters.severity | urlencode }}&amp;device={{ filters.device | urlencode }}&amp;event_type={{ filters.event_type | urlencode }}&amp;vendor={{ filters.vendor | urlencode }}&amp;cursor={{ next_cursor | urlencode }}">Next page</a></nav>{% endif %}
+{% endif %}
 {% endblock %}

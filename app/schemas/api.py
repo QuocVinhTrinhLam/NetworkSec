@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import StrEnum
+from ipaddress import IPv4Address
 from typing import Annotated, Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StrictInt, StrictStr
 
+from app.schemas.correlation import OspfAdjacencyKey, OspfReporterState
 from app.schemas.event import EventSeverity, EventType, NormalizedEvent
 
 
@@ -58,6 +60,45 @@ class AlertPageResponse(BaseModel):
     page: StrictInt
     page_size: StrictInt
     total: StrictInt
+
+
+class AlertEventEvidence(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    event_id: StrictStr
+    timestamp: AwareDatetime
+    event_type: EventType | None
+    reporter_router_id: IPv4Address | None
+    is_current: bool
+    source_ip: StrictStr | None
+
+
+class AlertHistoryEntry(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    previous_status: AlertLifecycleStatus | None
+    status: AlertLifecycleStatus
+    source: StrictStr
+    actor: StrictStr | None
+    note: StrictStr | None
+    changed_at: AwareDatetime
+
+
+class OspfEvidenceSummary(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    adjacency: OspfAdjacencyKey
+    technical_recovered_at: AwareDatetime | None
+    superseded_at: AwareDatetime | None
+    reporters: tuple[OspfReporterState, ...]
+
+
+class AlertEvidenceResponse(BaseModel):
+    schema_version: Literal["1.0"] = "1.0"
+    alert_id: StrictStr
+    event_refs: tuple[AlertEventEvidence, ...]
+    history: tuple[AlertHistoryEntry, ...]
+    ospf: OspfEvidenceSummary | None
 
 
 class AlertAcknowledgementRequest(BaseModel):

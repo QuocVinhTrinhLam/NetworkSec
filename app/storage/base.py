@@ -2,13 +2,25 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
+from ipaddress import IPv4Address
 from typing import Any, Protocol
 
-from app.schemas.api import AlertRecord
-from app.schemas.correlation import AggregatedAlert
-from app.schemas.event import EventSeverity, EventType, EventVendor, NormalizedEvent
+from app.schemas.api import AlertLifecycleStatus, AlertRecord
+from app.schemas.correlation import (
+    AggregatedAlert,
+    OspfAdjacencyKey,
+    OspfCorrelationSnapshot,
+    OspfReporterState,
+)
+from app.schemas.event import (
+    EventSchemaVersion,
+    EventSeverity,
+    EventType,
+    EventVendor,
+    NormalizedEvent,
+)
 
 
 class StorageError(RuntimeError):
@@ -34,6 +46,8 @@ class EventQuery:
     vendor: EventVendor | None = None
     device_name: str | None = None
     interface_name: str | None = None
+    schema_version: EventSchemaVersion | None = None
+    event_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,12 +67,68 @@ class AlertQuery:
     event_type: EventType | None = None
     device_name: str | None = None
     interface_name: str | None = None
+    include_active_before_start: bool = False
+    rule_id: str | None = None
+    source_ip: str | None = None
+    search: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class AlertListMetadata:
+    adjacency: OspfAdjacencyKey | None = None
+    source_ips: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
 class AlertPage:
     items: tuple[AlertRecord, ...]
     total: int
+    metadata: dict[str, AlertListMetadata] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class AlertQueueSummary:
+    new: int
+    acknowledged: int
+    high_priority: int
+    recently_resolved: int
+
+
+@dataclass(frozen=True, slots=True)
+class AlertStatusChange:
+    previous_status: AlertLifecycleStatus | None
+    status: AlertLifecycleStatus
+    source: str
+    actor: str | None
+    note: str | None
+    changed_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class IncidentEventRef:
+    event_id: str
+    timestamp: datetime
+    reporter_router_id: IPv4Address | None = None
+    event_type: EventType | None = None
+    is_current: bool = True
+    source_ip: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class OspfIncidentRecord:
+    adjacency: OspfAdjacencyKey
+    technical_recovered_at: datetime | None
+    superseded_at: datetime | None
+    reporters: tuple[OspfReporterState, ...]
+    event_refs: tuple[IncidentEventRef, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class AlertEvidence:
+    alert: AlertRecord
+    event_refs: tuple[IncidentEventRef, ...]
+    history: tuple[AlertStatusChange, ...]
+    ospf: OspfIncidentRecord | None = None
 
 
 class LogStorage(Protocol):
@@ -74,9 +144,15 @@ class AlertStateStorage(Protocol):
 
     def upsert_alert(self, alert: AggregatedAlert, event: NormalizedEvent) -> AlertRecord: ...
 
+    def apply_ospf_snapshot(self, snapshot: OspfCorrelationSnapshot) -> bool: ...
+
     def query_alerts(self, query: AlertQuery) -> AlertPage: ...
 
     def get_alert(self, aggregate_id: str) -> AlertRecord | None: ...
+
+    def get_alert_evidence(self, aggregate_id: str) -> AlertEvidence | None: ...
+
+    def queue_summary(self, start: datetime, end: datetime) -> AlertQueueSummary: ...
 
     def acknowledge(
         self, aggregate_id: str, actor: str, note: str | None

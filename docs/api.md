@@ -26,7 +26,11 @@ Không trả DSN, SQL, response body nội bộ của Loki hoặc credential tro
 
 - Event dùng `page_size` 1–500 và opaque `cursor`. Client không phân tích hoặc tự tạo cursor.
 - Alert dùng `page` từ 1 và `page_size` 1–200; response có `total`.
-- Loki query chạy `direction=backward`. Cursor giữ timestamp nanosecond và event ID đã thấy tại đúng biên timestamp để không bỏ sót event có cùng timestamp.
+- Loki đọc khoảng `[start, end)` với `direction=backward`. API sắp xếp giảm dần theo
+  timestamp nanosecond và `event_id` trong từng nhóm cùng timestamp. Cursor mới giữ
+  vị trí theo hai giá trị này. Cursor cũ có danh sách ID tại biên vẫn đọc được.
+- Giữ nguyên mốc thời gian và bộ lọc khi chuyển trang. Cursor nằm ngoài khoảng thời
+  gian được yêu cầu trả HTTP 400. API đọc dữ liệu Loki hiện tại ở mỗi trang.
 
 ## Endpoints
 
@@ -34,7 +38,7 @@ Không trả DSN, SQL, response body nội bộ của Loki hoặc credential tro
 
 Query normalized events từ Loki.
 
-Filters: `start`, `end`, `severity`, `event_type`, `vendor`, `device_name`, `interface_name`, `page_size`, `cursor`.
+Filters: `start`, `end`, `severity`, `event_type`, `vendor`, `device_name`, `interface_name`, `page_size`, `cursor`, `include_ospf`.
 
 `severity`, `event_type`, `vendor` là Loki labels cardinality thấp. `device_name` và `interface_name` lọc sau `| json`, không tạo label cardinality cao. Response:
 
@@ -47,19 +51,34 @@ Filters: `start`, `end`, `severity`, `event_type`, `vendor`, `device_name`, `int
 }
 ```
 
-Nếu raw spool replay cùng `event_id`, adapter loại bản lặp trong kết quả API.
+Nếu raw spool replay cùng `event_id` tại timestamp gốc, adapter loại bản lặp và ưu tiên
+`received_at` sớm nhất. Khi một lần đọc đạt giới hạn dòng Loki, adapter đọc thêm
+trước khi kết luận hết kết quả hoặc phát cursor ở nhóm cùng timestamp. Adapter dùng
+tối đa 5.000 dòng mỗi lần đọc và 24 lần đọc mỗi trang. Nếu không thể đọc đủ nhóm
+timestamp trong các giới hạn này, API trả HTTP 502 để client nhận biết trang chưa
+thể hoàn tất.
+
+Request mặc định chỉ đọc stream `schema_version="1.0"` trước khi phân trang. Client muốn đọc OSPF gửi `include_ospf=true`. Các item khi đó có thể là event `1.0` hoặc `1.1` và client kiểm tra `items[].schema_version`. Page envelope vẫn là `1.0`. Ví dụ `GET /api/v1/events?include_ospf=true&event_type=routing_neighbor_up`. Khi dùng cursor, giữ nguyên các filter, gồm `include_ospf`. Xem [schema OSPF và quy trình nâng phiên bản](parsing.md#ospfv2-phase-1).
 
 ### `GET /api/v1/alerts`
 
 Query aggregate state từ PostgreSQL.
 
-Filters: `start`, `end`, `severity`, `status`, `event_type`, `device_name`, `interface_name`, `page`, `page_size`.
+Filters: `start`, `end`, `severity`, `status`, `event_type`, `device_name`, `interface_name`, `rule_id`, `source_ip`, `search`, `page`, `page_size`.
 
-`status` nhận `new`, `acknowledged`, `resolved`. Time range chọn alert có khoảng quan sát giao với range (`last_seen >= start` và `first_seen <= end`).
+`status` nhận `new`, `acknowledged`, `resolved`. Khi truyền `start` hoặc `end`, API chọn alert có khoảng quan sát giao với range (`last_seen >= start` và `first_seen <= end`). Khi bỏ cả hai, queue giữ cả alert `new` và `acknowledged` đã mở hơn 24 giờ. Alert `resolved` vẫn áp dụng khoảng mặc định. Incident OSPF bị supersede vẫn có thể tra cứu trực tiếp bằng ID.
+
+`rule_id` khớp chính xác. `device_name` có thể khớp tên thiết bị hoặc một router ID trong adjacency OSPF. `source_ip` khớp địa chỉ IPv4/IPv6 trong evidence có metadata đó. Router ID OSPF và địa chỉ nguồn syslog không được dùng để suy ra `source_ip`. `search` tìm chuỗi literal không phân biệt hoa thường trong metadata alert, loại event, operator note và IP nguồn đã lưu. Để tìm nội dung log, dùng Loki/Grafana.
 
 ### `GET /api/v1/alerts/{aggregate_id}`
 
 Trả một `AlertRecord 1.0`. `aggregate_id` phải là đúng 64 ký tự hex lowercase.
+
+### `GET /api/v1/alerts/{aggregate_id}/evidence`
+
+Yêu cầu session hiện có. Trả `AlertEvidenceResponse 1.0` gồm `alert_id`, `event_refs`, `history` và `ospf`. Mỗi reference có ID, timestamp, loại event nếu biết, reporter hoặc IP nguồn nếu có, và cờ `is_current`. `history` ghi status trước/sau, nguồn thay đổi, actor, note và thời điểm. `ospf` chứa identity, area, reporter state, thời điểm recovery kỹ thuật và supersession. Alert thường có `ospf=null`. Endpoint trả `404` nếu alert chưa tồn tại.
+
+Các response `AlertRecord` và `EventPageResponse` hiện hữu giữ nguyên shape. Bằng chứng raw vẫn lưu trong Loki, UI có link tới `/events?event_id=…&event_at=…` để mở đúng record.
 
 ### `POST /api/v1/alerts/{aggregate_id}/acknowledge`
 
@@ -69,7 +88,11 @@ Body tùy chọn:
 {"note": "Đang kiểm tra interface vật lý"}
 ```
 
-Chuyển status sang `acknowledged`, ghi `acknowledged_by`, `acknowledged_at`, status audit và note. Actor lấy từ session, không nhận từ body.
+ACK chuyển alert `new` sang `acknowledged` và ghi actor từ session, thời điểm, note và lịch sử.
+ACK lặp khi alert còn `acknowledged` có thể cập nhật note đã cung cấp và giữ actor,
+thời điểm và lịch sử ACK đầu tiên. Nếu alert đã `resolved`, API trả HTTP 200 với
+`AlertRecord` hiện tại. ACK lúc đó giữ nguyên trạng thái, note và lịch sử. Alert chưa
+tồn tại vẫn trả HTTP 404.
 
 ### `PATCH /api/v1/alerts/{aggregate_id}/status`
 
@@ -77,7 +100,9 @@ Chuyển status sang `acknowledged`, ghi `acknowledged_by`, `acknowledged_at`, s
 {"status": "resolved", "note": "Link ổn định sau thay cáp"}
 ```
 
-Cho phép `new`, `acknowledged`, `resolved`. Status `acknowledged` dùng cùng semantics với endpoint acknowledge.
+Cho phép `new`, `acknowledged`, `resolved`. Status `acknowledged` áp dụng cùng điều kiện
+và kết quả như endpoint ACK. Status `resolved` đóng alert, còn status `new` cho phép
+operator chủ ý mở lại alert. Gửi lại cùng trạng thái không thêm dòng chuyển trạng thái.
 
 ### `GET /api/v1/storage/health`
 
