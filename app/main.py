@@ -7,6 +7,8 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Response
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
@@ -77,6 +79,25 @@ def create_app(
         same_site="lax",
         max_age=8 * 60 * 60,
     )
+
+    @app.exception_handler(RequestValidationError)
+    async def request_validation_error(
+        _request: Request, exc: RequestValidationError
+    ) -> JSONResponse:
+        # Validation input and context can contain credentials, including in nested bodies.
+        detail = [
+            {
+                "loc": error["loc"],
+                "type": error["type"],
+                "msg": (
+                    "Invalid value"
+                    if error["type"] in {"value_error", "assertion_error"}
+                    else error["msg"]
+                ),
+            }
+            for error in exc.errors()
+        ]
+        return JSONResponse(status_code=422, content={"detail": detail})
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next: Callable) -> Response:

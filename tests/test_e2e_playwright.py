@@ -13,6 +13,7 @@ chuẩn đặt tên: TC-<ID>_<stt>_<slug-mo-ta>_<PASS|FAIL>.png
 from __future__ import annotations
 
 import json
+import os
 import socket
 import threading
 import time
@@ -20,22 +21,38 @@ from collections.abc import Generator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 import pytest
 import uvicorn
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page, expect, sync_playwright
+from test_operational_dashboard import ALERT_ID, NOW
+from test_operational_dashboard import _client as operational_client
+from test_operational_dashboard import _event as operational_event
 
 from app.config import BASE_DIR, Settings
 from app.db import Database
 from app.main import create_app
 from app.models import Alert
+from app.schemas.correlation import OspfAdjacencyKey, OspfReporterState
+from app.schemas.event import EventType
+from app.storage.base import (
+    AlertListMetadata,
+    AlertPage,
+    AlertQuery,
+    IncidentEventRef,
+    OspfIncidentRecord,
+)
 from app.web.auth import hash_password
 
 pytestmark = pytest.mark.e2e
 
 # Thư mục bằng chứng nằm trong workspace để test chạy được trong sandbox và CI.
-EVIDENCE_DIR: Path = (BASE_DIR / "docs" / "testing" / "e2e" / "evidence").resolve()
+EVIDENCE_DIR = Path(
+    os.getenv("NETWORKSEC_QA_EVIDENCE_DIR", str(BASE_DIR / "docs/testing/e2e/evidence"))
+).resolve()
 EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -47,8 +64,20 @@ def page() -> Generator[Page, None, None]:
         Page: Đối tượng trang Playwright sẵn sàng cho thao tác tự động hóa.
     """
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=True)
+        browser = playwright.chromium.launch(
+            headless=True,
+            channel=os.getenv("NETWORKSEC_QA_BROWSER_CHANNEL"),
+            args=["--disable-background-networking", "--no-first-run"],
+        )
         context = browser.new_context(viewport={"width": 1280, "height": 800})
+        context.route(
+            "**/*",
+            lambda route: (
+                route.continue_()
+                if urlsplit(route.request.url).hostname == "127.0.0.1"
+                else route.abort()
+            ),
+        )
         test_page = context.new_page()
         try:
             yield test_page
@@ -436,3 +465,103 @@ def test_tc_dash_03_chart_layout_and_24h_timeline(live_server: LiveTestServer, p
     )
 
     capture_evidence(page, "TC-DASH-03", 2, "charts-persisted-after-refresh", passed=True)
+
+
+def test_qa_operational_browser_workflow(
+    page: Page, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, _, alerts = operational_client(tmp_path)
+    adjacency = OspfAdjacencyKey.model_validate(
+        {
+            "scope": "qa-synthetic",
+            "area": "0.0.0.0",
+            "router_ids": ["192.0.2.1", "192.0.2.2"],
+            "link_id": "qa-transit",
+        }
+    )
+    alerts.incident = OspfIncidentRecord(
+        adjacency,
+        None,
+        None,
+        (OspfReporterState(router_id=adjacency.router_ids[0], last_down_at=NOW),),
+        (
+            IncidentEventRef(
+                operational_event().event_id,
+                NOW,
+                adjacency.router_ids[0],
+                EventType.ROUTING_NEIGHBOR_DOWN,
+            ),
+        ),
+    )
+    alerts.metadata = AlertListMetadata(adjacency)
+    existing_query = alerts.query_alerts
+
+    def mock_query(query: AlertQuery) -> AlertPage:
+        if query.search == "qa-no-such-alert":
+            return AlertPage((), 0)
+        return existing_query(query)
+
+    monkeypatch.setattr(alerts, "query_alerts", mock_query)
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = int(sock.getsockname()[1])
+    server = LiveTestServer(client.app, "127.0.0.1", port, client.app.state.database)
+    server.start()
+    try:
+        page.goto(server.url + "/alerts")
+        expect(page).to_have_url(server.url + "/login")
+        for password in ("qa-invalid", "test-password"):
+            page.get_by_label("Username").fill("admin")
+            page.get_by_label("Password").fill(password)
+            page.get_by_role("button", name="Sign in securely").click()
+            if password == "qa-invalid":
+                expect(page.get_by_role("alert")).to_have_text("Invalid username or password")
+        expect(page).to_have_url(server.url + "/dashboard")
+        page.reload()
+        expect(page.get_by_role("link", name="Open alert queue")).to_be_visible()
+        with page.expect_response(lambda r: r.url.endswith("/partials/dashboard")) as refresh:
+            page.locator(".refresh-button").click()
+        assert refresh.value.ok
+        page.get_by_role("link", name="Open alert queue").click()
+        page.get_by_label("Search alerts").fill("qa-no-such-alert")
+        page.get_by_role("button", name="Apply filters").click()
+        expect(page.get_by_text("No matching alerts")).to_be_visible()
+        page.get_by_label("Search alerts").fill("core-sw-01")
+        page.get_by_label("Severity").select_option("high")
+        page.get_by_role("button", name="Apply filters").click()
+        assert alerts.last_query is not None and alerts.last_query.search == "core-sw-01"
+        assert alerts.last_query.severity == "high"
+        csv_href = page.get_by_role("link", name="Export CSV").get_attribute("href")
+        assert csv_href is not None and "search=core-sw-01" in csv_href
+        csv_output = page.request.get(server.url + csv_href)
+        assert csv_output.ok and "192.0.2.1" in csv_output.text()
+        details = f"/alerts/{ALERT_ID}"
+        page.goto(server.url + details)
+        expect(page.get_by_role("heading", name="OSPF adjacency")).to_be_visible()
+        expect(page.get_by_role("heading", name="Incident timeline")).to_be_visible()
+        expect(page.get_by_role("heading", name="Related event evidence")).to_be_visible()
+        expect(page.get_by_text("Awaiting confirmed Full")).to_be_visible()
+        assert (
+            page.request.post(server.url + details + "/ack", form={"csrf": "wrong"}).status == 403
+        )
+        page.locator("input[name=note]").fill("<qa-label>synthetic note</qa-label>")
+        page.get_by_role("button", name="Acknowledge alert").click()
+        expect(page.get_by_text("<qa-label>synthetic note</qa-label>").first).to_be_visible()
+        expect(page.locator("qa-label")).to_have_count(0)
+        page.locator("input[name=note]").fill("QA manually resolved")
+        page.get_by_role("button", name="Resolve alert").click()
+        expect(page.locator(".detail-badges .state-pill")).to_have_text("Resolved")
+        expect(page.get_by_text("QA manually resolved").first).to_be_visible()
+        error = page.goto(server.url + "/alerts/unknown")
+        assert error is not None and error.status == 404
+        expect(page.locator("body")).to_contain_text("Alert not found")
+        page.goto(server.url + "/dashboard")
+        page.locator('form[action="/logout"] button').click()
+        expect(page).to_have_url(server.url + "/login")
+        page.goto(server.url + details)
+        expect(page).to_have_url(server.url + "/login")
+    except (AssertionError, PlaywrightError):
+        capture_evidence(page, "TC-QA-OPS", 1, "operational-workflow", passed=False)
+        raise
+    finally:
+        server.stop()

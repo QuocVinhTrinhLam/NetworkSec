@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from app.processor.healthcheck import main
@@ -21,5 +22,13 @@ def test_healthcheck_requires_fresh_healthy_state(tmp_path: Path, monkeypatch) -
     state.heartbeat()
     assert main() == 0
 
+    stale = (datetime.now(UTC) - timedelta(seconds=60)).isoformat()
+    with state.connect() as connection:
+        connection.execute("UPDATE processor_health SET heartbeat_at = ?", (stale,))
+    assert main() == 1
+    state.heartbeat()
+    assert main() == 0
+
     state.mark_blocked("test failure")
+    state.heartbeat()
     assert main() == 1

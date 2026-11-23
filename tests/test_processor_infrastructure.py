@@ -42,6 +42,15 @@ def test_rsyslog_preserves_raw_and_emits_versioned_json_envelope() -> None:
     assert 'addLF="on"' in template
 
 
+def test_rsyslog_publishes_both_5514_ports_on_loopback_by_default() -> None:
+    document = yaml.safe_load(Path("compose.yaml").read_text(encoding="utf-8"))
+    published_ports = document["services"]["rsyslog"]["ports"]
+    assert set(published_ports) == {
+        "${SYSLOG_BIND_HOST:-127.0.0.1}:${SYSLOG_TCP_PORT:-5514}:5514/tcp",
+        "${SYSLOG_BIND_HOST:-127.0.0.1}:${SYSLOG_UDP_PORT:-5514}:5514/udp",
+    }
+
+
 def test_production_image_does_not_use_development_reload() -> None:
     dockerfile = Path("docker/Dockerfile").read_text(encoding="utf-8")
 

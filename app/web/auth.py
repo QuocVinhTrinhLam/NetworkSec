@@ -47,9 +47,16 @@ def csrf_token(request: Request) -> str:
 
 
 def validate_csrf(request: Request, supplied: str) -> None:
-    expected = request.session.get("csrf_token", "")
-    if not expected or not hmac.compare_digest(str(expected), supplied):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid CSRF token")
+    expected = request.session.get("csrf_token")
+    if (
+        isinstance(expected, str)
+        and expected
+        and expected.isascii()
+        and supplied.isascii()
+        and hmac.compare_digest(expected, supplied)
+    ):
+        return
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid CSRF token")
 
 
 def require_user(request: Request) -> str:
