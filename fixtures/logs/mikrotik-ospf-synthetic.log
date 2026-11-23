@@ -1,0 +1,4 @@
+<134>2026-11-23T19:00:00+07:00 R1 route,ospf,info edge-v2 { version: 2 router-id: 192.0.2.1 } backbone { 0.0.0.0 } interface { p2p 198.51.100.1%ether3 } neighbor { router-id: 192.0.2.2 state: Full } state change to Down
+<134>Nov 23 19:00:05 R1 edge-v2 { version: 2 router-id: 192.0.2.1 } backbone { 0.0.0.0 } interface { p2p 198.51.100.1%ether3 } neighbor { router-id: 192.0.2.2 state: Loading } state change to Full
+nov/23/2026 19:00:01 route,ospf,debug edge-v2 { version: 2 router-id: 192.0.2.1 } backbone { 0.0.0.0 } interface { p2p-unnumbered 198.51.100.1%ether3 } neighbor { router-id: 192.0.2.2 state: Down } state change to Init
+nov/23/2026 19:00:02 route,ospf,debug edge-v2 { version: 2 router-id: 192.0.2.1 } backbone { 0.0.0.0 } interface { broadcast 198.51.100.1%ether3 } neighbor { router-id: 192.0.2.2 state: Init } state change to TwoWay

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -209,8 +210,64 @@ def test_event_schema_forbids_unknown_fields() -> None:
         NormalizedEvent.model_validate(payload)
 
 
-def test_event_json_schema_exposes_fixed_contract_versions() -> None:
+def test_event_json_schema_exposes_supported_contract_versions() -> None:
     schema = NormalizedEvent.model_json_schema()
 
-    assert schema["properties"]["schema_version"]["const"] == "1.0"
+    assert schema["properties"]["schema_version"]["enum"] == ["1.0", "1.1"]
+    assert schema["properties"]["schema_version"]["default"] == "1.0"
     assert schema["properties"]["parser_version"]["const"] == "1.0"
+
+
+def test_legacy_event_wire_fields_and_identity_are_unchanged() -> None:
+    raw = fixture_lines("cisco-ios.log")[2]
+    event = parsed(raw, source_host="R2")
+    old_identity = "\x1f".join(
+        ("1.0", "cisco", "cisco_ios", "R2", event.timestamp.isoformat(), raw)
+    )
+    payload = event.model_dump(mode="json")
+
+    assert event.event_id == hashlib.sha256(old_identity.encode()).hexdigest()
+    assert set(payload) == {
+        "schema_version",
+        "event_id",
+        "timestamp",
+        "received_at",
+        "vendor",
+        "product",
+        "event_type",
+        "severity",
+        "outcome",
+        "device_name",
+        "message",
+        "raw_message",
+        "rule_id",
+        "rule_tracker",
+        "interface_name",
+        "interface_state",
+        "source_ip",
+        "destination_ip",
+        "source_port",
+        "destination_port",
+        "protocol",
+        "direction",
+        "action",
+        "username",
+        "auth_method",
+        "session",
+        "mac_address",
+        "vendor_severity",
+        "parser_name",
+        "parser_version",
+    }
+    assert payload["schema_version"] == "1.0"
+    assert payload["rule_tracker"] is None
+    assert NormalizedEvent.model_validate(payload) == event
+    assert (
+        NormalizedEvent.model_validate(
+            payload | {"event_type": "routing_neighbor_down"}
+        ).schema_version
+        == "1.0"
+    )
+    for fields in ({"current_state": None}, {"event_type": "routing_neighbor_up"}):
+        with pytest.raises(ValidationError):
+            NormalizedEvent.model_validate(payload | fields)

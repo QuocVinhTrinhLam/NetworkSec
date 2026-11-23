@@ -1,0 +1,5 @@
+Nov 23 12:00:00.001: %OSPF-5-ADJCHG: Process 1, Nbr 192.0.2.1 on GigabitEthernet0/1 from FULL to DOWN, Neighbor Down: Dead timer expired
+<189>42: *Nov 23 12:00:05.021: %OSPF-5-ADJCHG: Process 1, Nbr 192.0.2.1 on GigabitEthernet0/1 from LOADING to FULL, Loading Done
+*Nov 23 12:00:06.010: %OSPF-5-ADJCHG: Process 1, Nbr 192.0.2.1 on GigabitEthernet0/1 from FULL to EXSTART,OOB-Resynchronization
+Nov 23 12:00:07.030: %OSPF-5-ADJCHG: Process 1, Nbr 192.0.2.1 on GigabitEthernet0/1 from EXSTART to EXCHANGE, Negotiation Done
+Nov 23 12:00:08.040: %OSPF-5-ADJCHG: Process 1, Nbr 192.0.2.1 on GigabitEthernet0/1 from EXCHANGE to LOADING, Exchange Done

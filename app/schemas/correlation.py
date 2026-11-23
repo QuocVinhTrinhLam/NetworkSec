@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from ipaddress import IPv4Address
 from typing import Annotated, Literal
 
 from pydantic import (
@@ -15,7 +16,7 @@ from pydantic import (
     model_validator,
 )
 
-from app.schemas.event import EventSeverity, EventType, NormalizedEvent
+from app.schemas.event import BoundedName, EventSeverity, EventType, NormalizedEvent
 
 GroupField = Literal["device_name", "interface_name", "event_family", "event_type"]
 RequiredField = Literal["device_name", "interface_name"]
@@ -47,6 +48,48 @@ class CorrelationRule(BaseModel):
         return self
 
 
+class OspfEndpoint(BaseModel):
+    """Inventory coordinates of a reporting interface."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    router_id: IPv4Address
+    device_name: BoundedName
+    interface_name: BoundedName
+
+
+class OspfLink(BaseModel):
+    """A configured point-to-point adjacency within the correlation scope."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    id: BoundedName
+    area: IPv4Address
+    endpoints: tuple[OspfEndpoint, OspfEndpoint]
+
+    @model_validator(mode="after")
+    def validate_endpoints(self) -> OspfLink:
+        first, second = self.endpoints
+        if first.router_id == second.router_id or first.device_name == second.device_name:
+            raise ValueError("OSPF link endpoints must identify two distinct routers")
+        return self
+
+
+class OspfCorrelationConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    enabled: StrictBool = True
+    scope: BoundedName
+    max_clock_skew_seconds: Annotated[StrictInt, Field(ge=0, le=86400)] = 300
+    links: tuple[OspfLink, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_unique_link_ids(self) -> OspfCorrelationConfig:
+        if len({link.id for link in self.links}) != len(self.links):
+            raise ValueError("OSPF link IDs must be unique within the scope")
+        return self
+
+
 class CorrelationConfig(BaseModel):
     """Versioned top-level correlation configuration."""
 
@@ -54,6 +97,7 @@ class CorrelationConfig(BaseModel):
 
     schema_version: Literal["1.0"] = "1.0"
     rules: Annotated[tuple[CorrelationRule, ...], Field(min_length=1)]
+    ospf: OspfCorrelationConfig | None = None
 
     @model_validator(mode="after")
     def validate_unique_rule_ids(self) -> CorrelationConfig:
@@ -102,6 +146,66 @@ class CorrelatedRawEvent(BaseModel):
     event: NormalizedEvent
 
 
+class OspfAdjacencyKey(BaseModel):
+    """Inventory link ID or a reporter-local interface when the peer side is unknown."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    scope: BoundedName
+    protocol: Literal["ospf"] = "ospf"
+    area: IPv4Address
+    router_ids: tuple[IPv4Address, IPv4Address]
+    link_id: BoundedName | None = None
+    local_interface: tuple[BoundedName, BoundedName] | None = None
+
+
+class OspfReporterState(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    router_id: IPv4Address
+    last_down_at: AwareDatetime
+    uncertain_until: AwareDatetime | None = None
+    full_at: AwareDatetime | None = None
+
+
+class OspfIncidentEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    event_id: StrictStr
+    timestamp: AwareDatetime
+    observed_at: AwareDatetime
+    reporter_router_id: IPv4Address
+    event_type: EventType
+
+
+class OspfIncident(BaseModel):
+    """A technical outage derived from OSPF observations."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    incident_id: StrictStr
+    first_down_at: AwareDatetime
+    recovered_at: AwareDatetime | None = None
+    reporters: tuple[OspfReporterState, ...]
+    evidence: tuple[OspfIncidentEvidence, ...]
+
+    @property
+    def event_ids(self) -> tuple[str, ...]:
+        return tuple(item.event_id for item in self.evidence)
+
+
+class OspfCorrelationSnapshot(BaseModel):
+    """Revisioned projection for reconciling a downstream incident store."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    adjacency_id: StrictStr
+    adjacency: OspfAdjacencyKey
+    revision: Annotated[StrictInt, Field(ge=0)]
+    incidents: tuple[OspfIncident, ...]
+    unreliable_event_ids: tuple[StrictStr, ...] = ()
+
+
 class CorrelationResult(BaseModel):
     """Outcome returned for every normalized event."""
 
@@ -111,6 +215,7 @@ class CorrelationResult(BaseModel):
     duplicate: StrictBool = False
     reason: StrictStr | None = None
     alert: AggregatedAlert | None = None
+    ospf: OspfCorrelationSnapshot | None = None
 
 
 class NotificationClaim(BaseModel):

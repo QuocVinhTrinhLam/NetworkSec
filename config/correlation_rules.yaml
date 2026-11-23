@@ -15,3 +15,9 @@ rules:
       - interface_name
     window_seconds: 60
     notification_cooldown_seconds: 300
+
+ospf:
+  enabled: true
+  scope: n4-2-lab
+  max_clock_skew_seconds: 300
+  links: []

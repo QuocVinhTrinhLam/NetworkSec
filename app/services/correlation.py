@@ -9,6 +9,7 @@ import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
+from ipaddress import IPv4Address
 from pathlib import Path
 from typing import Any
 
@@ -22,8 +23,16 @@ from app.schemas.correlation import (
     CorrelationResult,
     CorrelationRule,
     NotificationClaim,
+    OspfAdjacencyKey,
+    OspfCorrelationSnapshot,
 )
-from app.schemas.event import EventSeverity, NormalizedEvent
+from app.schemas.event import EventSeverity, EventType, NormalizedEvent, OspfNeighborState
+from app.services.ospf_correlation import (
+    OspfIdentity,
+    OspfObservation,
+    project_ospf,
+    resolve_ospf_identity,
+)
 
 CORRELATION_SCHEMA = """
 PRAGMA journal_mode=WAL;
@@ -69,7 +78,32 @@ CREATE TABLE IF NOT EXISTS correlation_events (
 
 CREATE INDEX IF NOT EXISTS idx_correlation_events_aggregate
     ON correlation_events(aggregate_id, event_timestamp, event_id);
+
+CREATE TABLE IF NOT EXISTS ospf_observations (
+    sequence INTEGER PRIMARY KEY,
+    scope TEXT NOT NULL,
+    event_id TEXT NOT NULL,
+    adjacency_key TEXT NOT NULL,
+    reporter_id TEXT NOT NULL,
+    event_timestamp TEXT NOT NULL,
+    received_at TEXT NOT NULL,
+    state TEXT NOT NULL CHECK(state IN ('DOWN', 'FULL')),
+    clock_reliable INTEGER NOT NULL CHECK(clock_reliable IN (0, 1)),
+    uncertain_until TEXT,
+    UNIQUE(scope, event_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ospf_observations_adjacency
+    ON ospf_observations(adjacency_key, sequence);
 """
+
+OSPF_EVENT_TYPES = frozenset(
+    (
+        EventType.ROUTING_NEIGHBOR_DOWN,
+        EventType.ROUTING_NEIGHBOR_UP,
+        EventType.ROUTING_NEIGHBOR_STATE_CHANGE,
+    )
+)
 
 SEVERITY_RANK = {
     EventSeverity.LOW: 0,
@@ -243,6 +277,108 @@ class CorrelationStore:
             ).fetchall()
         return [_trace_from_row(row) for row in rows]
 
+    def persist_ospf(
+        self,
+        event: NormalizedEvent,
+        identity: OspfIdentity,
+        *,
+        max_clock_skew: timedelta,
+    ) -> CorrelationResult:
+        """Atomically journal an observation and return the current adjacency snapshot."""
+        state = event.current_state
+        if state is None or state not in (OspfNeighborState.DOWN, OspfNeighborState.FULL):
+            raise ValueError("OSPF correlation requires a DOWN or FULL observation")
+        clock_reliable = abs(event.timestamp - event.received_at) <= max_clock_skew
+        uncertain_until = (
+            event.received_at + max_clock_skew
+            if not clock_reliable and state is OspfNeighborState.DOWN
+            else None
+        )
+        adjacency = identity.adjacency
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            existing = connection.execute(
+                """
+                SELECT adjacency_key, clock_reliable FROM ospf_observations
+                WHERE scope = ? AND event_id = ?
+                """,
+                (adjacency.scope, event.event_id),
+            ).fetchone()
+            if existing is None:
+                connection.execute(
+                    """
+                    INSERT INTO ospf_observations (
+                        scope, event_id, adjacency_key, reporter_id, event_timestamp,
+                        received_at, state, clock_reliable, uncertain_until
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        adjacency.scope,
+                        event.event_id,
+                        adjacency.model_dump_json(),
+                        str(identity.reporter),
+                        event.timestamp.isoformat(),
+                        event.received_at.isoformat(),
+                        state.value,
+                        int(clock_reliable),
+                        uncertain_until.isoformat() if uncertain_until is not None else None,
+                    ),
+                )
+            else:
+                adjacency = OspfAdjacencyKey.model_validate_json(existing["adjacency_key"])
+                clock_reliable = bool(existing["clock_reliable"])
+            snapshot = self._ospf_snapshot(connection, adjacency)
+        return CorrelationResult(
+            matched=True,
+            duplicate=existing is not None,
+            reason=None if clock_reliable else "unreliable OSPF event timestamp",
+            ospf=snapshot,
+        )
+
+    def ospf_snapshot(self, adjacency: OspfAdjacencyKey) -> OspfCorrelationSnapshot:
+        """Reconstruct the projection from the durable observation journal."""
+        with self.connect() as connection:
+            return self._ospf_snapshot(connection, adjacency)
+
+    def list_ospf_adjacencies(self) -> tuple[OspfAdjacencyKey, ...]:
+        """Discover journaled adjacencies for a downstream reconciliation pass."""
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT DISTINCT adjacency_key FROM ospf_observations ORDER BY adjacency_key"
+            )
+            return tuple(OspfAdjacencyKey.model_validate_json(row["adjacency_key"]) for row in rows)
+
+    @staticmethod
+    def _ospf_snapshot(
+        connection: sqlite3.Connection, adjacency: OspfAdjacencyKey
+    ) -> OspfCorrelationSnapshot:
+        rows = connection.execute(
+            """
+            SELECT sequence, event_id, reporter_id, event_timestamp, received_at,
+                   state, clock_reliable, uncertain_until
+            FROM ospf_observations WHERE adjacency_key = ? ORDER BY sequence
+            """,
+            (adjacency.model_dump_json(),),
+        )
+        return project_ospf(
+            adjacency,
+            [
+                OspfObservation(
+                    sequence=int(row["sequence"]),
+                    event_id=str(row["event_id"]),
+                    reporter=IPv4Address(row["reporter_id"]),
+                    timestamp=_parse_time(row["event_timestamp"]),
+                    received_at=_parse_time(row["received_at"]),
+                    state=OspfNeighborState(row["state"]),
+                    clock_reliable=bool(row["clock_reliable"]),
+                    uncertain_until=(
+                        _parse_time(row["uncertain_until"]) if row["uncertain_until"] else None
+                    ),
+                )
+                for row in rows
+            ],
+        )
+
     def claim_notification(self, aggregate_id: str, now: datetime) -> NotificationClaim:
         """Atomically claim notification eligibility while enforcing persisted cooldown."""
         if now.tzinfo is None or now.utcoffset() is None:
@@ -305,6 +441,19 @@ class CorrelationEngine:
         return cls(store, load_correlation_config(config_path))
 
     def process(self, event: NormalizedEvent) -> CorrelationResult:
+        ospf = self.config.ospf
+        if ospf is not None and ospf.enabled and event.event_type in OSPF_EVENT_TYPES:
+            if event.current_state not in (OspfNeighborState.DOWN, OspfNeighborState.FULL):
+                return CorrelationResult(matched=False, reason="no OSPF outage transition")
+            try:
+                identity = resolve_ospf_identity(event, ospf)
+            except ValueError as exc:
+                return CorrelationResult(matched=False, reason=str(exc))
+            return self.store.persist_ospf(
+                event,
+                identity,
+                max_clock_skew=timedelta(seconds=ospf.max_clock_skew_seconds),
+            )
         for rule in self.config.rules:
             if not rule.enabled or event.event_type not in rule.event_types:
                 continue

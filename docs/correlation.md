@@ -1,4 +1,4 @@
-# Correlation và Alert Aggregation — Phase 4
+# Correlation và Alert Aggregation
 
 ## Data flow
 
@@ -23,7 +23,7 @@ COMMIT
         +--> atomic notification cooldown claim --> Telegram worker
 ```
 
-Phase 4 dùng SQLite hiện hữu để giữ footprint nhỏ trên VM 2 vCPU/5,3 GiB RAM. Không thêm Kafka, Redis hoặc PostgreSQL. PostgreSQL/outbox chỉ nên được xem xét ở phase sau nếu đo tải hoặc yêu cầu delivery chứng minh SQLite không đủ.
+Luồng link-state dùng SQLite để aggregate và giữ event membership. Worker sau đó đưa bản ghi vào Loki và upsert aggregate sang PostgreSQL, nơi dashboard đọc và cập nhật trạng thái alert vận hành.
 
 ## Rule và khóa nhóm
 
@@ -92,3 +92,44 @@ Test tạo 100 `NormalizedEvent` Link Up/Down duy nhất của cùng `core-sw-01
 - claim Telegram đầu tiên được phép, claim kế tiếp trong cooldown bị chặn.
 
 Các test riêng kiểm tra biên `[start, end)`, duplicate delivery, out-of-order, phân tách device/interface và restart với cooldown persisted.
+
+## OSPF Phase 2
+
+Rule OSPF xử lý `DOWN` và `FULL` từ `NormalizedEvent 1.1`. Các trạng thái trung gian vẫn là telemetry trong Loki. Rule link-state tiếp tục dùng cửa sổ 60 giây. Một sự cố OSPF có thể kéo dài qua nhiều cửa sổ và vẫn giữ cùng `incident_id`.
+
+### Định danh adjacency
+
+Khóa gồm `scope` của collector, protocol OSPF, Area ID, cặp router ID đã sắp thứ tự và định danh link. Nối hai góc nhìn cần khai báo `links` với hai đầu interface trong `config/correlation_rules.yaml`. Mỗi đầu khớp chính xác `device_name`, `interface_name` và peer router ID. Area/local router ID mà event đã cung cấp phải khớp khai báo. Hai link song song dùng hai ID và hai cặp interface riêng.
+
+Ví dụ dưới đây dùng tên và địa chỉ từ fixture mô phỏng. Thay bằng identity ghi nhận trong lab trước khi triển khai:
+
+```yaml
+ospf:
+  enabled: true
+  scope: n4-2-lab
+  max_clock_skew_seconds: 300
+  links:
+    - id: r1-r2-transit
+      area: 0.0.0.0
+      endpoints:
+        - {router_id: 192.0.2.1, device_name: R1, interface_name: ether3}
+        - {router_id: 192.0.2.2, device_name: R2, interface_name: GigabitEthernet0/1}
+```
+
+Cấu hình trong repo để `links: []`. Khi thiết bị cung cấp đầy đủ Area ID, local/peer ID và interface, engine vẫn theo dõi riêng theo cặp `(device_name, interface_name)`. Dạng log Cisco IOSv của Phase 1 cần khai báo link để bổ sung Area ID và local router ID. Thiếu định danh, khớp nhiều link hoặc xung đột metadata khiến event chỉ đi vào Loki. Engine không suy ra link chung từ việc hai router có cùng cặp ID.
+
+### Thứ tự sự kiện và recovery
+
+- SQLite ghi nhận mỗi `event_id` một lần trong mỗi `scope`. Các log Down khác ID vẫn là các quan sát khác nhau của cùng sự cố. Incident ID lấy từ adjacency và Down đáng tin cậy được ghi journal đầu tiên trong sự cố.
+- Mỗi bên đã báo Down cần một Full cùng góc nhìn, có event time **lớn hơn** Down mới nhất của bên đó. Full từ bên chưa báo Down và Full lặp không thay thế bằng chứng còn thiếu. Một Down mới của bên đã báo Full trong khi phía kia vẫn pending sẽ buộc bên đó xác nhận lại.
+- Khi timestamp bằng nhau, xử lý Down trước Full. Full cùng thời điểm không xác nhận recovery. Full đến trước Down theo thứ tự nhận vẫn có thể được dùng nếu event time thực sự mới hơn. Down hợp lệ sau khi sự cố đã hồi phục tạo incident mới.
+- Ngưỡng lệch tuyệt đối giữa event time và `received_at` mặc định là 300 giây. Full vượt ngưỡng chỉ là evidence. Down vượt ngưỡng đến trong một outage đang mở được đặt theo thời điểm collector nhận, và bên đó cần Full đáng tin cậy muộn hơn thời điểm nhận cộng ngưỡng sai số. Down vượt ngưỡng đứng riêng được ghi nhận trong `unreliable_event_ids`. Giữ `received_at` gốc khi replay vì đó là một phần kiểm tra thứ tự.
+- Event muộn có thể bổ sung một bên chưa được biết, làm một recovery tạm thời trở lại pending, hoặc thay đổi ranh giới giữa hai sự cố. Snapshot mới được dựng lại từ journal của đúng adjacency. Sau khi gộp, ID của Down hợp lệ được ghi đầu tiên được giữ, và ID bị gộp không còn trong snapshot mới.
+
+### Lưu bền và điểm tích hợp Phase 3
+
+`correlation.db` giữ journal append-only `ospf_observations`, gồm idempotency, adjacency, reporter và thời gian dùng để quyết định. `CorrelationResult.ospf` chứa projection kỹ thuật với `adjacency_id`, `revision`, incidents và event IDs. `list_ospf_adjacencies()` và `ospf_snapshot()` cho phép dựng lại projection sau restart mà không cần phát lại syslog. Việc dựng lại hiện đọc lịch sử riêng của adjacency, phù hợp với quy mô lab. Cần đo chi phí trước khi dùng cho lịch sử lớn.
+
+Khi Loki ghi lỗi sau khi SQLite commit, worker retry cùng offset. Correlation trả snapshot hiện tại cho event trùng. PostgreSQL sở hữu trạng thái vận hành gồm status, ACK, actor và note. [Storage Phase 3](storage.md#ospf-phase-3) mô tả cách worker ghi snapshot sau Loki và cập nhật checkpoint.
+
+Chốt mapping trước khi xử lý log live để các observation tiếp theo đi vào cùng adjacency đã ghi. Thay đổi `scope` hoặc ID link tạo identity mới, nên cần đối soát dữ liệu cũ khi đổi mapping.

@@ -2,7 +2,7 @@
 
 ## Contract
 
-`app.schemas.event.NormalizedEvent` là contract Pydantic bất biến, `extra="forbid"`, phiên bản `schema_version: "1.0"`. Contract này tách khỏi `Alert 1.0`: event mô tả một syslog record đã parse; alert là detection/lifecycle state cho dashboard.
+`app.schemas.event.NormalizedEvent` là contract Pydantic bất biến, `extra="forbid"`, đọc được `schema_version` `1.0` và `1.1`. Event mô tả một bản ghi syslog đã parse. `Alert 1.0` mô tả cảnh báo và vòng đời trên dashboard.
 
 Các nhóm field chính:
 
@@ -21,6 +21,10 @@ Versioning:
 - Minor: chỉ thêm field optional/default và consumer cũ phải tiếp tục hoạt động.
 - Major: đổi/xóa/đổi nghĩa field; cần chạy song song contract cũ và mới khi migration.
 
+Event hiện hữu tiếp tục dùng `1.0` với cùng field, giá trị null và công thức `event_id`. Event OSPF mới dùng `1.1` vì parser strict cũ sẽ từ chối field và enum mới. Loki ghi cả hai phiên bản vào stream mang label `schema_version` tương ứng. Reader mới đọc cả hai, dữ liệu lịch sử giữ nguyên. API chỉ trả `1.0` theo mặc định, với [opt-in để đọc OSPF](api.md#get-apiv1events).
+
+Khi nâng phiên bản, đưa dashboard/API và các consumer cần đọc OSPF lên bản có reader `1.1` trước khi cập nhật processor. Reader cũ bỏ qua event `1.1`. SHA-256 vẫn tính trên phiên bản schema, vendor, parser, device, timestamp sự kiện và raw input. Replay cùng input, nguồn và timestamp giữ nguyên ID. Dạng có PRI và dạng đã bỏ PRI là hai chuỗi input khác nhau. Worker tiếp tục giữ bản gốc ở spool và đưa `parse_message` vào parser.
+
 ## Coverage đã xác minh
 
 | Vendor/product | Vendor identifier | Event type | Fixture | Trạng thái |
@@ -33,20 +37,39 @@ Versioning:
 
 Pattern Cisco được đối chiếu với [Cisco system message examples](https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst3750/software/release/15-0_2_se/system/message/smg3750/overview.html) và [PORT_SECURITY message guide](https://www.cisco.com/c/en/us/td/docs/switches/lan/cisco_ie2000/software/release/15_0_2_ea/system/messages/System_message/msg_desc.html). MikroTik topic và login wording được đối chiếu với [RouterOS logging documentation](https://help.mikrotik.com/docs/spaces/ROS/pages/328094/Log) và ví dụ chính thức [Syslog with Elasticsearch](https://help.mikrotik.com/docs/spaces/ROS/pages/282132697/Syslog%2Bwith%2BElasticsearch). Vị trí field pfSense dựa trên [Raw Filter Log Format](https://docs.netgate.com/pfsense/en/latest/monitoring/logs/raw-filter-format.html).
 
+## OSPFv2 Phase 1
+
+Hai fixture `cisco-ospf-synthetic.log` và `mikrotik-ospf-synthetic.log` là dữ liệu mô phỏng dựa trên mẫu công khai, dùng địa chỉ dành cho tài liệu. Chưa có mẫu bắt trực tiếp từ R1/R2 của lab.
+
+| Nguồn | Dạng được kiểm thử | Metadata có trong log |
+|---|---|---|
+| Cisco IOS | `%OSPF-5-ADJCHG` với `Process …, Nbr … on … from … to …, …`. Timestamp theo header IOS hiện có, có thể kèm `*`, số thứ tự và PRI. | `Nbr` là router ID của peer. `interface_name` lấy từ `on`. Process ID không biểu thị Area ID. [Cisco Down và Full](https://www.cisco.com/c/en/us/support/docs/ip/open-shortest-path-first-ospf/13697-25.pdf) · [Cisco intermediate states](https://www.cisco.com/c/en/us/td/docs/solutions/Enterprise/Campus/VSS30dg/campusVSS_DG/VSS-dg_ch3.pdf) · [Ví dụ remote IOS](https://community.cisco.com/t5/other-collaboration-subjects/need-more-detail-on-cme-cdr/td-p/357068) |
+| MikroTik RouterOS v7 | Payload có `version: 2`, area, `interface { … IPv4%interface }` và `neighbor { router-id: … state: … } state change to …`. Hỗ trợ console có ngày/năm và remote BSD hoặc ISO 8601 có timezone, có hoặc không có topics. Khi có topics, cần `ospf`. | Area ID, router ID local/peer và tên interface sau `%`. IPv4 trước `%` là địa chỉ interface local. [RouterOS v7 log công khai](https://forum.mikrotik.com/t/ospf-not-installing-connected-routes/176643/3) · [RouterOS wire format](https://manual.mikrotik.com/docs/diagnostics-monitoring-and-troubleshooting/log/) |
+
+`NormalizedEvent 1.1` dùng `routing_protocol="ospf"`, `previous_state`, `current_state` và `neighbor_router_id`. Khi log cung cấp, parser thêm `ospf_area`, `local_router_id` và dùng lại `interface_name`. Các địa chỉ và ID OSPF dùng IPv4 dạng dotted quad. `neighbor_ip` dành cho địa chỉ peer được cung cấp rõ ràng. Hai dạng log trên chưa có trường này. Metadata OSPF thiếu được lược khỏi JSON. `source_ip` và `interface_state` giữ nguyên ngữ nghĩa.
+
+| Trạng thái đích | Event type | Outcome |
+|---|---|---|
+| `DOWN` | `routing_neighbor_down` | `failure` |
+| `FULL` | `routing_neighbor_up` | `success` |
+| `ATTEMPT`, `INIT`, `2-WAY`, `EXSTART`, `EXCHANGE`, `LOADING` | `routing_neighbor_state_change` | `unknown` |
+
+`2WAY` và `TwoWay` được chuẩn hóa thành `2-WAY`. `FULL` xác nhận trạng thái adjacency từ bản ghi đó. Việc ghép nó với lần Down trước đó thuộc correlation. Severity Cisco giữ mapping từ syslog level. RouterOS dùng severity topic nếu có, hoặc `low` nếu thiếu. [OSPF neighbor states](https://www.rfc-editor.org/rfc/rfc2328.html#section-10.1)
+
 ## Unsupported hoặc chưa xác minh
 
 - Port Flap: chưa có raw sample thể hiện nhiều transition/cửa sổ thời gian. Parser chỉ tạo từng `link_up`/`link_down`; correlation/flap detection chưa được suy đoán.
-- Routing Neighbor Down: không có BGP/OSPF neighbor-down sample trong repository.
+- BGP, OSPFv3 và format OSPF ngoài các mẫu trên chưa được hỗ trợ. Cần mẫu live từ IOSv và CHR để xác minh header thực tế, timezone, topics/prefix, Down, Full và intermediate nếu thiết bị phát.
 - Cisco `SEC_LOGIN-5-LOGIN_SUCCESS` và `SYS-5-RESTART`: có fixture nhưng ngoài event types Phase 3, trả `unknown`.
-- Cisco format có prefix `*`, timezone token, stack suffix, multiline hoặc cấu hình qua TFTP chưa được hỗ trợ dù một số biến thể xuất hiện trong tài liệu.
+- Cisco `*` hoặc số thứ tự được nhận cho `OSPF-5-ADJCHG`. Timezone token, stack suffix, multiline, record thiếu ngày/tháng và cấu hình qua TFTP chưa được hỗ trợ.
 - OPNsense `arpwatch` và OpenVPN samples: chưa có mapping cho event types được yêu cầu, trả `unknown`.
 - OPNsense `filterlog`, pfSense IPv6/ICMP, pass records và alternate syslog/RFC 5424 envelope: chưa có fixture regression, không công bố hỗ trợ.
 - Open vSwitch unknown-VLAN sample: chưa có event type tương ứng, trả `unknown`.
-- MikroTik format không có year hoặc có remote RFC 3164 envelope chưa được hỗ trợ.
+- Định dạng remote RouterOS chỉ áp dụng cho OSPFv2. Login failure giữ format console cũ. Dạng OSPF console chỉ có giờ, action prefix tùy biến, CEF và message kiểu RouterOS v6 chưa được hỗ trợ.
 
 ## Timestamp assumptions
 
-Cisco và pfSense samples thiếu year/timezone. Parser nhận `received_at` và `source_timezone`, chọn year gần receipt time nhất rồi chuyển UTC. Mặc định timezone là UTC; production processor phải truyền timezone của thiết bị. MikroTik fixture có year nhưng vẫn không có timezone nên dùng cùng `source_timezone`.
+Cisco, pfSense và RouterOS BSD remote thiếu year/timezone. Parser dùng `source_timezone`, chọn năm gần `received_at` nhất rồi chuyển UTC. RouterOS console có năm và dùng `source_timezone`. RouterOS ISO 8601 có offset tường minh nên dùng offset từ bản ghi.
 
 ## Failure semantics
 
@@ -61,7 +84,7 @@ Result luôn giữ raw input để điều tra; reason dùng code cố định t
 ## Kiểm thử fixture
 
 ```bash
-python -m pytest tests/test_multi_vendor_parsers.py
+python -m pytest tests/test_multi_vendor_parsers.py tests/test_ospf_parsers.py
 ```
 
-Tests đọc trực tiếp bốn file dưới `fixtures/logs`, xác minh field normalization, raw preservation, UTC conversion, stable event ID, strict schema, unknown formats và malformed input.
+Tests đọc trực tiếp các fixture dưới `fixtures/logs` để kiểm tra chuẩn hóa, giữ nguyên raw input, UTC, replay ID, schema strict, unknown và malformed. Test worker, Loki và API kiểm tra đường đi của hai phiên bản bằng backend giả lập.

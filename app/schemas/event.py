@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 from datetime import UTC, datetime
 from enum import StrEnum
+from ipaddress import IPv4Address
 from typing import Annotated, Literal
 
 from pydantic import (
@@ -37,6 +38,8 @@ class EventType(StrEnum):
     LINK_DOWN = "link_down"
     PORT_FLAP = "port_flap"
     ROUTING_NEIGHBOR_DOWN = "routing_neighbor_down"
+    ROUTING_NEIGHBOR_UP = "routing_neighbor_up"
+    ROUTING_NEIGHBOR_STATE_CHANGE = "routing_neighbor_state_change"
     CONFIGURATION_CHANGE = "configuration_change"
     LOGIN_FAILURE = "login_failure"
     ACL_DENY = "acl_deny"
@@ -57,6 +60,25 @@ class EventOutcome(StrEnum):
     UNKNOWN = "unknown"
 
 
+class OspfNeighborState(StrEnum):
+    DOWN = "DOWN"
+    ATTEMPT = "ATTEMPT"
+    INIT = "INIT"
+    TWO_WAY = "2-WAY"
+    EXSTART = "EXSTART"
+    EXCHANGE = "EXCHANGE"
+    LOADING = "LOADING"
+    FULL = "FULL"
+
+    @property
+    def classification(self) -> tuple[EventType, EventOutcome]:
+        if self is OspfNeighborState.DOWN:
+            return EventType.ROUTING_NEIGHBOR_DOWN, EventOutcome.FAILURE
+        if self is OspfNeighborState.FULL:
+            return EventType.ROUTING_NEIGHBOR_UP, EventOutcome.SUCCESS
+        return EventType.ROUTING_NEIGHBOR_STATE_CHANGE, EventOutcome.UNKNOWN
+
+
 class ParseStatus(StrEnum):
     PARSED = "parsed"
     UNKNOWN = "unknown"
@@ -66,6 +88,20 @@ class ParseStatus(StrEnum):
 Port = Annotated[StrictInt, Field(ge=1, le=65535)]
 BoundedName = Annotated[StrictStr, Field(min_length=1, max_length=255)]
 OptionalBoundedName = Annotated[StrictStr, Field(min_length=1, max_length=255)] | None
+EventSchemaVersion = Literal["1.0", "1.1"]
+OSPF_FIELDS = {
+    "routing_protocol",
+    "ospf_area",
+    "local_router_id",
+    "neighbor_router_id",
+    "neighbor_ip",
+    "previous_state",
+    "current_state",
+}
+
+
+def _is_none(value: object) -> bool:
+    return value is None
 
 
 class NormalizedEvent(BaseModel):
@@ -73,7 +109,7 @@ class NormalizedEvent(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True, validate_default=True)
 
-    schema_version: Literal["1.0"] = "1.0"
+    schema_version: EventSchemaVersion = "1.0"
     event_id: StrictStr = ""
     timestamp: AwareDatetime
     received_at: AwareDatetime
@@ -103,6 +139,13 @@ class NormalizedEvent(BaseModel):
     vendor_severity: Annotated[StrictStr, Field(min_length=1, max_length=32)] | None = None
     parser_name: Annotated[StrictStr, Field(min_length=1, max_length=64)]
     parser_version: Literal["1.0"] = "1.0"
+    routing_protocol: Literal["ospf"] | None = Field(default=None, exclude_if=_is_none)
+    ospf_area: IPv4Address | None = Field(default=None, exclude_if=_is_none)
+    local_router_id: IPv4Address | None = Field(default=None, exclude_if=_is_none)
+    neighbor_router_id: IPv4Address | None = Field(default=None, exclude_if=_is_none)
+    neighbor_ip: IPv4Address | None = Field(default=None, exclude_if=_is_none)
+    previous_state: OspfNeighborState | None = Field(default=None, exclude_if=_is_none)
+    current_state: OspfNeighborState | None = Field(default=None, exclude_if=_is_none)
 
     @field_validator("timestamp", "received_at")
     @classmethod
@@ -117,6 +160,38 @@ class NormalizedEvent(BaseModel):
         if len(value.encode("utf-8")) > MAX_RAW_MESSAGE_BYTES:
             raise ValueError(f"raw_message exceeds {MAX_RAW_MESSAGE_BYTES} UTF-8 bytes")
         return value
+
+    @field_validator(
+        "ospf_area", "local_router_id", "neighbor_router_id", "neighbor_ip", mode="before"
+    )
+    @classmethod
+    def require_ipv4_text(cls, value: object) -> object:
+        if value is not None and not isinstance(value, (str, IPv4Address)):
+            raise ValueError("OSPF addresses and IDs must use dotted IPv4 notation")
+        return value
+
+    @model_validator(mode="after")
+    def validate_schema_version(self) -> NormalizedEvent:
+        if self.schema_version == "1.0":
+            if self.model_fields_set & OSPF_FIELDS or self.event_type in {
+                EventType.ROUTING_NEIGHBOR_UP,
+                EventType.ROUTING_NEIGHBOR_STATE_CHANGE,
+            }:
+                raise ValueError("OSPF metadata and new event types require schema 1.1")
+            return self
+
+        if (
+            self.routing_protocol != "ospf"
+            or self.neighbor_router_id is None
+            or self.previous_state is None
+            or self.current_state is None
+        ):
+            raise ValueError("schema 1.1 requires an OSPF neighbor transition")
+        if self.previous_state is self.current_state:
+            raise ValueError("OSPF transitions must change state")
+        if (self.event_type, self.outcome) != self.current_state.classification:
+            raise ValueError("OSPF event type and outcome must match current_state")
+        return self
 
     @model_validator(mode="after")
     def derive_event_id(self) -> NormalizedEvent:
