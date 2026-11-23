@@ -2,42 +2,44 @@
 
 ## Mục tiêu và trạng thái
 
-Kiến trúc đích thu nhận log nhẹ từ GNS3, Loghub và Python Syslog Generator; bảo toàn raw log; chuẩn hóa bằng Python; lưu log trong Loki; quản lý trạng thái cảnh báo trong PostgreSQL khi cần; trình bày qua Grafana và Custom Dashboard; gửi thông báo Telegram. Toàn bộ chạy bằng Docker Compose trên Ubuntu Server 2 vCPU, khoảng 5,3 GiB RAM.
-
-Kiến trúc hiện hành nối Custom Dashboard và Telegram vào Loki/PostgreSQL, đồng thời provision Grafana cho operational log visualization. FastAPI, SQLite compatibility, rsyslog, parser và correlation vẫn được giữ. Hệ thống tập trung quản lý sự kiện mạng và không triển khai chức năng SOC/SIEM tổng quát.
+N4.2 thu nhận Syslog từ thiết bị mạng, Loghub và Python Syslog Generator. Mục tiêu triển
+khai lab là Ubuntu Server 2 vCPU, khoảng 5,3 GiB RAM, chạy Docker Compose. Chuỗi OSPF
+đã được kiểm thử từ envelope mô phỏng đến Loki, PostgreSQL, Custom Dashboard và Telegram
+giả lập. Syslog live R1–R2, Grafana runtime trong Compose và benchmark Ubuntu cần xác nhận riêng.
 
 ```text
 GNS3 / Loghub / Python Generator
               |
               v
-       rsyslog ingestion  ----> raw spool bền vững
+       rsyslog ingestion  ----> raw.log
+              |
+        processor.jsonl
               |
               v
- Python parse -> normalize -> correlate -> aggregate
+ Python parse -> normalize -> correlate
               |                    |
               v                    v
-            Loki       SQLite -> PostgreSQL state
+            Loki       SQLite journal -> PostgreSQL
               |                    |
-              +---------+----------+
-                        v
-             Grafana / Custom Dashboard
-                        |
-                        v
-                     Telegram
+              v                    +--> FastAPI/Jinja (queue, evidence, ACK, Resolve)
+            Grafana                +--> Telegram (optional)
 ```
+
+API sự kiện và liên kết điều tra từ Custom Dashboard cũng truy vấn Loki.
 
 ## Boundary thành phần
 
 | Boundary | Trách nhiệm | Không chịu trách nhiệm |
 |---|---|---|
 | Sources | Phát syslog có timestamp/source rõ ràng | Retry nghiệp vụ hoặc phân loại |
-| rsyslog | UDP/TCP listener, ghi raw spool trước, chuyển tin cậy tới worker | Parse theo vendor |
+| rsyslog | UDP/TCP listener, raw spool và envelope JSONL qua hai action queue | Parse theo vendor |
 | Python processor | Parse, normalize, match rule, fingerprint, aggregate | Lưu raw log duy nhất |
 | SQLite Phase 4 | Aggregate state, event membership, cooldown claim | Full-text raw retention hoặc delivery receipt |
 | Loki | Raw/normalized log có nhãn cardinality thấp | Alert lifecycle và transactional outbox |
-| Processor SQLite | Byte checkpoint, DLQ, health và correlation trace cục bộ | Alert lifecycle dùng chung |
-| PostgreSQL | Aggregate state, acknowledgement, notification outbox | Full-text raw log dài hạn |
-| Dashboard/Grafana | Điều tra, KPI, visualization | Ingestion hoặc notification delivery |
+| Processor SQLite | Byte checkpoint, DLQ, receipt và nhật ký tương quan OSPF có thể dựng lại | Alert lifecycle dùng chung |
+| PostgreSQL | Incident state, event references, lịch sử, ACK, resolve và notification outbox | Full-text raw log dài hạn |
+| Grafana | Quan sát lưu lượng sự kiện, OSPF Down/Full, bảng phân bố, timeline và điều tra log | Quản lý sự cố |
+| Custom Dashboard | Hàng đợi vận hành, bộ lọc, bằng chứng, lịch sử, ACK/Resolve và CSV | Biểu đồ quan sát tổng quát |
 | Telegram worker | Rate limit, retry, allowlist, delivery receipt | Là nguồn sự thật của alert |
 
 PostgreSQL Phase 5 giữ aggregate state, acknowledgement và status audit. SQLite hiện hữu vẫn phục vụ dashboard cũ và test nhanh; chưa migration dữ liệu legacy tự động. Loki giữ log searchable, còn rsyslog raw spool vẫn là nguồn replay/bằng chứng gốc.
@@ -45,19 +47,29 @@ PostgreSQL Phase 5 giữ aggregate state, acknowledgement và status audit. SQLi
 ## Data flow và độ tin cậy
 
 1. Source gửi syslog tới rsyslog qua TCP khi có thể; UDP chỉ dùng cho thiết bị lab không hỗ trợ TCP.
-2. rsyslog ghi từng message vào raw spool trước khi forward. Action queue dùng disk-assisted queue, retry vô hạn có backoff và checkpoint riêng.
+2. rsyslog chuyển mỗi message đến hai action queue độc lập có hỗ trợ đĩa và retry.
+   `raw.log` giữ input; `processor.jsonl` giữ metadata gửi/nhận và nội dung để parse.
 3. Python worker chỉ nâng byte checkpoint sau khi normalized event đã vào Loki và aggregate/reference
    liên quan đã upsert thành công vào PostgreSQL. Checkpoint, DLQ và correlation state nằm trên volume
    `processor-state`.
 4. Lỗi parse đi vào dead-letter stream kèm error code và tham chiếu raw record; không sửa hoặc xóa raw payload.
-5. Loki nhận bản raw và normalized theo batch. PostgreSQL, nếu được bật, giữ alert state/outbox để Telegram có at-least-once delivery.
-6. Consumer phải idempotent vì replay có thể tạo delivery trùng.
+5. Với OSPF, SQLite ghi observation theo `event_id`. Worker ghi sự kiện vào Loki trước
+   khi áp dụng revision vào PostgreSQL. PostgreSQL ghi trạng thái, tham chiếu, lịch sử và
+   outbox trong cùng transaction.
+6. Nếu ghi PostgreSQL thất bại sau Loki, worker đọc lại record tại cùng offset. Dedup
+   theo event ID và revision bảo vệ state nghiệp vụ. Bot claim theo transition và chat.
+   Khi kết quả lần gửi đầu mơ hồ, delivery được đánh dấu `uncertain`; kết quả đó cần đối soát.
 
-Raw spool sẽ có rotation theo dung lượng/thời gian, quyền chỉ dành cho service account và retention có cấu hình. Log thật không được đưa vào Git.
+Raw spool có quyền dành cho service account. Cần kế hoạch rotation/retention phối hợp
+checkpoint trước khi vận hành dài hạn. Log thật không được đưa vào Git.
 
 ## Event contract
 
-Contract hiện hành là `schema_version: "1.0"` tại `app/schemas/alert.py`, mô tả chi tiết trong [alert_schema.md](alert_schema.md) và JSON Schema tại [alert.schema.json](alert.schema.json). Event gồm identity, UTC timestamps, source/device/rule/network, severity, MITRE, lifecycle state, `raw_log`, `alert_id` và `dedup_key`.
+Processor dùng `app/schemas/event.py`. `NormalizedEvent 1.0` giữ contract cũ.
+`1.1` dành cho OSPFv2, thêm protocol, Area ID, local/peer router ID, peer IP khi nguồn
+cung cấp và hai trạng thái adjacency. Interface dùng `interface_name` có sẵn. Loki giữ cả
+hai version; `GET /api/v1/events` mặc định trả `1.0`, `include_ospf=true` trả cả hai.
+Demo legacy vẫn dùng schema riêng tại [alert_schema.md](alert_schema.md).
 
 Quy tắc versioning:
 
@@ -70,7 +82,11 @@ Quy tắc versioning:
 
 Phase 4 dùng `NormalizedEvent.event_id` làm idempotency key. Rule YAML mặc định nhóm Link Up/Down theo thiết bị, giao diện, họ `link_state` và tumbling window UTC 60 giây có biên cuối loại trừ. Aggregate giữ `count`, `first_seen`, `last_seen`, severity lớn nhất và tập event type gốc; bảng membership giữ raw message cùng normalized JSON của mọi event duy nhất. Replay cùng `event_id` không tăng count lần hai.
 
-Notification worker phải claim cooldown atomically trước khi gọi Telegram. Claim được persist nên restart không làm mất dedup state. Chi tiết group key, cửa sổ, trace và failure recovery nằm trong [correlation.md](correlation.md).
+OSPF dùng scope, Area ID, cặp Router ID và định danh link. Mỗi đầu đã báo Down cần một
+Full đáng tin cậy mới hơn Down mới nhất của đầu đó. Event đến muộn có thể cập nhật lại
+projection kỹ thuật. ACK và Resolve thủ công giữ actor, note và history độc lập với
+timestamp kỹ thuật. Sự cố đang mở tiếp tục hiện trong queue mặc định sau 24 giờ. Xem
+[correlation](correlation.md), [storage](storage.md) và [notification](dashboard_notifications.md).
 
 ## Quyết định Phase 1
 
@@ -137,6 +153,8 @@ Notification worker phải claim cooldown atomically trước khi gọi Telegram
   [Phase 7 GNS3 integration](../gns3/docs/phase7-syslog-integration.md).
 
 ## Lộ trình tám phase
+
+Các mục Phase 1–8 bên dưới ghi các mốc gốc của dự án trước khi bổ sung luồng OSPF R1–R2.
 
 1. Repository and Development Foundation.
 2. Syslog collection, raw spool và replay — implemented.

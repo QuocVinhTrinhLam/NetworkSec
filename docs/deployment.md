@@ -2,7 +2,104 @@
 
 ## Phạm vi hiện tại
 
-Tài liệu này chỉ hướng dẫn môi trường phát triển và Syslog lab. **Chưa triển khai lên Ubuntu Server**. Không có migration production, không mở firewall, không cấu hình TLS và không tạo credential bên ngoài máy phát triển.
+Tài liệu này hướng dẫn operator triển khai thủ công và nghiệm thu Syslog lab. Luồng OSPF
+đã được kiểm thử phần mềm với bản ghi spool mô phỏng. Ubuntu Compose và tích hợp live
+GNS3 R1–R2 vẫn cần nghiệm thu tại môi trường đích.
+
+## Triển khai OSPF trên Ubuntu
+
+### Cấu hình môi trường
+
+Điền `.env` từ `.env.example` trong checkout đã review. Giữ file ở quyền `0600`.
+Với deployment đang chạy, giữ tên Compose project, cấu hình và named volumes hiện hữu.
+
+| Thành phần | Biến và giá trị triển khai |
+|---|---|
+| PostgreSQL | `POSTGRES_PASSWORD` bắt buộc. Compose ghép password vào DSN libpq dạng key/value; dùng giá trị mạnh dạng hex để tránh ký tự cần escape. `POSTGRES_DB` và `POSTGRES_USER` mặc định `networksec`. Giữ `POSTGRES_BIND_HOST=127.0.0.1`, port mặc định `5432`. |
+| rsyslog | `SYSLOG_BIND_HOST` mặc định `127.0.0.1`. Khi nhận log từ GNS3, đặt thành **IP NIC lab đã có trên Ubuntu**, chẳng hạn `10.10.99.10` nếu đó là IP thực tế. `SYSLOG_TCP_PORT` và `SYSLOG_UDP_PORT` đều mặc định `5514`. |
+| Processor | `PROCESSOR_SOURCE_TIMEZONE` mặc định `UTC`. Đồng bộ đồng hồ R1, R2 và Ubuntu; đặt timezone khớp timestamp không có offset của nguồn. Chuẩn hóa các nguồn timestamp kiểu này về cùng timezone trước khi thu nhận. |
+| Loki | `LOKI_BIND_HOST=127.0.0.1`, port mặc định `3100`. Các container truy cập `http://loki:3100`. |
+| Grafana | `GRAFANA_ADMIN_PASSWORD` bắt buộc khi bật Grafana. `GRAFANA_ADMIN_USER` mặc định `admin`; giữ `GRAFANA_BIND_HOST=127.0.0.1`, port mặc định `3000`. |
+| Custom Dashboard | `SESSION_SECRET` ngẫu nhiên, duy nhất và dài ít nhất 32 ký tự; `ADMIN_PASSWORD_HASH` tạo qua `python -m app.password_hash`. `ADMIN_USERNAME` mặc định `admin`; giữ `BIND_HOST=127.0.0.1`, `DASHBOARD_PORT=8000`. Dùng `SESSION_HTTPS_ONLY=true` khi truy cập qua HTTPS đã được cấu hình. |
+| Telegram tùy chọn | `TELEGRAM_BOT_TOKEN`, `ALLOWED_CHAT_IDS`, và `APP_URL` là URL Dashboard hợp lệ mà người nhận truy cập được để có nút mở sự cố. `TELEGRAM_MIN_SEVERITY` mặc định `medium`. |
+
+`SYSLOG_BIND_HOST` chỉ điều khiển IP host publish cho TCP và UDP; cả hai listener trong
+container vẫn nghe cổng `5514`. NIC lab và đường đi từ R1/R2 cần được chuẩn bị thủ công.
+Kiểm tra IP bằng `ip -brief address` trên Ubuntu. Chỉ dùng mạng lab dành riêng cho
+Syslog plaintext. Giữ các cổng quản trị trên loopback và dùng đường truy cập quản trị đã duyệt.
+
+### Các bước operator thực hiện
+
+1. Xác nhận Docker Engine/Compose v2 có sẵn, cổng khả dụng và đủ dung lượng lưu trữ.
+   Sao lưu PostgreSQL và snapshot nhất quán các volume cần bảo toàn trước khi nâng cấp.
+   Giữ ít nhất `syslog-raw`, `syslog-queue`, `processor-state`, `postgres-data`,
+   `loki-data`, `grafana-data` và `monitor-data` trong kế hoạch sao lưu.
+2. Trước khi build, chốt scope, tên thiết bị nhìn thấy trong envelope, Router ID,
+   Area ID và tên interface thật của hai đầu trong `config/correlation_rules.yaml`.
+   Mặc định `ospf.links: []`. Cisco IOSv dùng mapping để có local Router ID và Area ID.
+   [Ví dụ mapping](correlation.md#định-danh-adjacency).
+3. Kiểm tra manifest tĩnh, sau đó chạy stack từ thư mục checkout trên Ubuntu.
+   Các lệnh dưới đây dành cho lần triển khai thủ công đã được phê duyệt.
+
+```bash
+docker compose --env-file .env --profile notifications config --quiet
+docker compose --env-file .env up -d --build --wait postgres loki rsyslog processor dashboard grafana
+docker compose ps
+curl -fsS http://127.0.0.1:3100/ready
+curl -fsS http://127.0.0.1:3000/api/health
+curl -fsS http://127.0.0.1:8000/health
+docker compose exec -T processor python -m app.processor.healthcheck
+```
+
+Đăng nhập Dashboard, xác nhận `/api/v1/storage/health` trả cả Loki và PostgreSQL
+`ready`. Healthcheck Compose của Loki kiểm tra cấu hình; `/ready` kiểm tra runtime.
+Các container ứng dụng áp dụng migration `001`–`005` theo thứ tự. Giữ checksum của
+migration đã chạy. Nếu nâng cấp lỗi, giữ volumes, xem log đã khử dữ liệu nhạy cảm
+và dùng quy trình restore đã kiểm thử nếu cần.
+
+Chỉ khi đã duyệt chat đích và thông báo thật, operator có thể bật bot:
+
+```bash
+docker compose --env-file .env --profile notifications up -d --build --wait bot
+```
+
+### Điều kiện lab và checklist nghiệm thu live
+
+- [ ] Chuẩn bị image hợp lệ cho MikroTik CHR R1 và Cisco IOSv R2. Transit kết nối hai
+  router có OSPFv2 Area 0, Router ID riêng biệt, cùng subnet phù hợp và các tham số
+  adjacency tương thích. Xác nhận cả hai đầu đã ở Full.
+- [ ] Giữ đường gửi Syslog đến Ubuntu khả dụng khi thử ngắt transit OSPF. Kiểm tra từng
+  router gửi tới IP NIC lab và đúng port; ưu tiên TCP khi nguồn hỗ trợ. Bảo vệ dữ liệu
+  và ghi nhận timestamp, timezone, `source_host`, `raw_message` và `parse_message` cho
+  từng mẫu Down và Full trước khi cập nhật fixture đã khử dữ liệu nhạy cảm.
+- [ ] Trong cửa sổ test được duyệt, tạo một lần gián đoạn transit. Đối chiếu raw spool,
+  envelope, checkpoint/DLQ và Loki. Hai Down của cùng link phải hiện như hai observation
+  trong Grafana và một incident ID trong PostgreSQL/Custom Dashboard. Bản replay cùng
+  event ID không được tăng số evidence duy nhất.
+- [ ] ACK incident bằng tài khoản vận hành và ghi note. Sau khi phục hồi transit, kiểm
+  tra INIT/2-WAY/EXSTART/EXCHANGE/LOADING và Full cũ không đóng incident. Nếu hai đầu đã
+  báo Down, chỉ resolve khi mỗi đầu có Full tin cậy mới hơn Down tương ứng.
+- [ ] Sau Full xác nhận, kiểm tra cùng incident ID chuyển `resolved` với nguồn
+  `ospf_recovery`, timestamp kỹ thuật, history, ACK và note còn nguyên. Đối chiếu cả
+  hai nguồn log trong Grafana và bản ghi bằng chứng trong Dashboard. Nếu operator đã
+  resolve thủ công, telemetry phục hồi chỉ cập nhật phần kỹ thuật.
+- [ ] Restart processor có kiểm soát trên môi trường test, replay input trùng và quan sát
+  không phát sinh incident hoặc transition trùng. Lặp một lần Down sau recovery để xác
+  nhận incident mới. Nếu bật bot test đã duyệt, mỗi chat chỉ có một thẻ Down và thẻ đó
+  được cập nhật khi recovery được xác nhận.
+
+`tests/test_gns3_phase7.py` mô tả snapshot gốc tám node và bảy link. Kết quả snapshot
+chỉ xác nhận metadata đã lưu. [Runbook GNS3 gốc](../gns3/docs/phase7-syslog-integration.md)
+là bối cảnh cho đường Syslog management. Checklist trên mô tả topology R1–R2 dự kiến.
+
+### Ngân sách tài nguyên
+
+Core Compose gồm sáu service với tổng memory limit khai báo khoảng `1.536 MiB`. Bot
+thêm `128 MiB`; mock và generator tùy chọn thêm `64 MiB` mỗi service khi chạy. Đây là
+giới hạn container, chưa gồm Ubuntu, Docker, GNS3 VM, node mạng và Windows 16 GB. Đo RAM,
+CPU, disk, backlog và độ trễ parse đến alert ở môi trường đích. Giữ một processor cho
+mỗi spool; kiểm soát tăng trưởng raw spool và lịch sử adjacency. Các tính năng OSPF
+dùng lại toàn bộ service hiện hữu.
 
 ## Chạy local bằng Python
 
@@ -76,6 +173,11 @@ hoặc thay inode, reader bắt đầu lại từ byte 0 và idempotency key ng�
 nhân trước khi tiếp tục. Chưa cấu hình log rotation tự động cho spool, vì rotation phải phối hợp với
 checkpoint; theo dõi disk và backup cả `syslog-raw` lẫn `processor-state`.
 
+Trước replay dữ liệu lưu trữ, kiểm tra giới hạn timestamp của Loki. Loki 3.7.0 với cấu
+hình hiện tại dùng giới hạn mặc định một tuần cho mẫu cũ và có giới hạn riêng cho
+ghi sai thứ tự trong một stream. Nếu Loki từ chối record, processor giữ checkpoint
+để retry. Giữ timestamp gốc và lập kế hoạch replay riêng cho backlog vượt giới hạn.
+
 ## Checklist Ubuntu cho Phase 8
 
 Các bước dưới đây là tiêu chí chuẩn bị, chưa được thực hiện:
@@ -91,7 +193,9 @@ Các bước dưới đây là tiêu chí chuẩn bị, chưa được thực hi
 
 ## Correlation state Phase 4
 
-Correlation dùng cùng kiểu file SQLite bền vững của ứng dụng; không cần service mới trong Compose. `CorrelationEngine.from_files()` phải nhận đường dẫn nằm trên volume `monitor-data` và `config/correlation_rules.yaml` read-only. Không đặt rule hoặc database vào image layer chứa dữ liệu production.
+Processor giữ SQLite correlation trên volume `processor-state`. Dockerfile đóng gói
+`config/correlation_rules.yaml` vào image, được đọc từ filesystem container read-only.
+Thay mapping đã review cần build lại image. SQLite legacy ở `monitor-data` phục vụ demo.
 
 Khi backup, cần snapshot nhất quán file database cùng WAL/SHM hoặc dừng writer ngắn trước khi copy. Không xóa database để xử lý lỗi schema. Sau restore, có thể replay raw spool: unique `event_id` ngăn count tăng lại, còn aggregate/cooldown đã commit tiếp tục qua restart.
 
@@ -132,7 +236,8 @@ Grafana datasource/dashboard là read-only provisioning tại `infra/grafana/`; 
 
 Grafana, PostgreSQL, Loki và Dashboard đều bind loopback mặc định. Nếu truy cập từ máy Windows host tới Ubuntu VM, dùng SSH tunnel hoặc reverse proxy TLS đã review; không đổi bind thành public chỉ để tiện demo.
 
-Bot PostgreSQL chạy migration `002` trước loop. Không chạy nhiều bot token/worker ngoài Compose trừ khi kiểm tra `FOR UPDATE SKIP LOCKED` và message state dùng chung. Backup PostgreSQL trước migration; không xóa volume để reset delivery state.
+Bot PostgreSQL chạy các migration hiện có, gồm delivery outbox OSPF trong `005`, trước loop.
+Backup PostgreSQL trước migration và giữ delivery state khi nâng cấp.
 
 ## GNS3 Syslog Phase 7
 

@@ -9,6 +9,32 @@ python -m mypy app
 python -m pytest -m "not e2e and not syslog_integration and not storage_integration and not processor_integration"
 ```
 
+## Kiểm thử OSPF
+
+Fast checks dùng fixture mô phỏng và bao phủ parser hai vendor, tương thích schema,
+correlation, retry/checkpoint, Dashboard, Grafana provisioning và Telegram fake. Kiểm
+thử storage dưới đây chạy với PostgreSQL và Loki cô lập đã sẵn sàng. Nạp
+`NETWORKSEC_TEST_POSTGRES_DSN` và `NETWORKSEC_TEST_LOKI_URL` từ môi trường thử nghiệm.
+Tài khoản PostgreSQL phải tạo được schema riêng cho mỗi test.
+
+```bash
+python -m pytest tests/integration/test_postgres_ospf_lifecycle.py tests/integration/test_ospf_loki_queries.py
+```
+
+- `test_postgres_ospf_lifecycle.py` kiểm tra migration tăng dần, transaction, replay,
+  stale Full, ACK, resolve, API/CSV và delivery claims với Telegram fake.
+- `test_ospf_spool_to_loki_incident_dashboard_and_telegram` dùng cả hai backend. Test
+  đưa envelope Syslog tổng hợp vào reader thực, restart worker bằng state cũ, kiểm tra
+  hai Down cùng incident, Full đến muộn, chứng cứ Loki, session/ACK và một lần cập nhật
+  thẻ Telegram giả lập sau recovery.
+- `test_ospf_loki_queries.py` chạy sáu biểu thức của dashboard OSPF trên Loki với dữ
+  liệu phiên bản `1.0` và `1.1`. Grafana runtime vẫn cần smoke test khi deploy.
+- `test_gns3_phase7.py` là test snapshot cũ tám node, bảy link. Checklist nghiệm thu
+  R1–R2 trên topology mới nằm trong [hướng dẫn Ubuntu](deployment.md#điều-kiện-lab-và-checklist-nghiệm-thu-live).
+
+Kiểm thử socket TCP/UDP và container restart dùng các opt-in bên dưới. Chạy trên
+stack test riêng vì các test đó ghi event và restart processor.
+
 ## Phase 8 benchmark tests
 
 ```bash

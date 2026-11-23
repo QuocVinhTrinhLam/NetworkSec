@@ -8,11 +8,12 @@ Hệ thống quản lý sự kiện mạng nhẹ cho router, switch và firewall
 GNS3 / Loghub / Syslog Generator
                 │ TCP/UDP
                 ▼
-             rsyslog ──► raw spool
+             rsyslog ──► raw.log
                 │
+          processor.jsonl
                 ▼
         Python Processing Worker
-      parse → normalize → correlate
+      parse → normalize → correlate (SQLite)
           │                 │
           ▼                 ▼
          Loki           PostgreSQL
@@ -22,8 +23,13 @@ GNS3 / Loghub / Syslog Generator
 
 - `rsyslog` nhận Syslog TCP/UDP và giữ raw log.
 - Worker có checkpoint, khôi phục sau restart và chống xử lý trùng.
-- Loki lưu event; PostgreSQL lưu cảnh báo tổng hợp.
-- FastAPI/Jinja cung cấp dashboard; Telegram là profile tùy chọn.
+- Loki lưu sự kiện chuẩn hóa cho Grafana và tra cứu qua API. PostgreSQL lưu sự cố, lịch sử,
+  ACK, tham chiếu bằng chứng và trạng thái gửi Telegram.
+- Custom Dashboard FastAPI/Jinja dùng cho hàng đợi, ACK, Resolve và xuất CSV. Telegram chạy
+  qua profile tùy chọn `notifications`.
+- OSPFv2 hỗ trợ Down, Full và các trạng thái trung gian từ fixture Cisco IOS và MikroTik
+  RouterOS v7. Hai góc nhìn dùng cùng một sự cố khi có mapping link. Xem
+  [quy tắc tương quan](docs/correlation.md#định-danh-adjacency).
 - Không sử dụng Kafka, Redis hoặc Wazuh.
 
 ## Khởi động nhanh
@@ -67,6 +73,9 @@ docker compose ps
 - Grafana: `http://127.0.0.1:3000`
 - Syslog TCP/UDP: `127.0.0.1:5514`
 
+Khi operator triển khai Ubuntu để nhận Syslog từ GNS3, đặt `SYSLOG_BIND_HOST` thành địa chỉ
+NIC lab thực tế đã được cấu hình trên Ubuntu. Xem [hướng dẫn triển khai và kiểm thử live](docs/deployment.md#triển-khai-ospf-trên-ubuntu).
+
 ## Thử pipeline Syslog
 
 Sinh 100 event có sequence ID:
@@ -99,22 +108,20 @@ Sau khi điền `TELEGRAM_BOT_TOKEN` và `ALLOWED_CHAT_IDS` trong `.env`:
 docker compose --profile notifications up -d --build bot
 ```
 
+`APP_URL` nên là URL Dashboard qua mạng mà người nhận có thể truy cập. Bot gửi một thẻ Down
+cho mỗi sự cố đủ ngưỡng và cập nhật thẻ sau xác nhận Full. Xem [hành vi gửi và retry](docs/dashboard_notifications.md).
+
 ## Kiểm thử
 
 ```bash
 python -m ruff check app tests scripts
 python -m ruff format --check app tests scripts
 python -m mypy app
-python -m pytest -m "not e2e and not syslog_integration" --cov=app
+python -m pytest -m "not e2e and not syslog_integration and not storage_integration and not processor_integration" --cov=app
 ```
 
-Kết quả gần nhất:
-
-- Python: `131 passed`, `2 skipped`, coverage `78%`.
-- Ruff, mypy, `pip check` và `pip-audit`: PASS.
-- Docker Compose, GNS3 live Syslog và benchmark Ubuntu: chưa được chạy trong môi trường hiện tại.
-
-Không dùng kết quả fixture, replay hoặc local preflight để thay cho bằng chứng live.
+[Testing runbook](docs/testing.md#kiểm-thử-ospf) có lệnh chạy PostgreSQL/Loki cô lập và
+phân biệt kiểm thử phần mềm, kiểm thử TCP/UDP qua Docker, snapshot GNS3 và kiểm thử thiết bị live.
 
 ## Tài liệu
 
