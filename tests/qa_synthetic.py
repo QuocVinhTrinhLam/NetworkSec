@@ -31,13 +31,21 @@ def routeros_ospf(
     current: str,
     *,
     area: str = "0.0.0.0",
-    peer: str = "192.0.2.2",
-    interface: str = "ether3",
+    peer: str | None = None,
+    interface: str | None = None,
+    router: int = 1,
 ) -> str:
+    if router not in (1, 2):
+        raise ValueError("synthetic RouterOS endpoint must be 1 or 2")
+    host = R1 if router == 1 else R2
+    local_id = f"192.0.2.{router}"
+    local_address = f"198.51.100.{router}"
+    peer = peer or ("192.0.2.2" if router == 1 else "192.0.2.1")
+    interface = interface or ("ether3" if router == 1 else "ether4")
     return (
-        f"{timestamp(second).isoformat()} {R1} route,ospf,info qa-v2 "
-        f"{{ version: 2 router-id: 192.0.2.1 }} area {{ {area} }} "
-        f"interface {{ p2p 198.51.100.1%{interface} }} "
+        f"{timestamp(second).isoformat()} {host} route,ospf,info qa-v2 "
+        f"{{ version: 2 router-id: {local_id} }} area {{ {area} }} "
+        f"interface {{ p2p {local_address}%{interface} }} "
         f"neighbor {{ router-id: {peer} state: {previous} }} state change to {current}"
     )
 

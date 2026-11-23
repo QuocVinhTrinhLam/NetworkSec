@@ -142,7 +142,7 @@ async def test_ospf_journal_recovers_through_worker_retry_and_restart(tmp_path: 
                 {"device_name": "R1", "interface_name": "ether3", "router_id": "192.0.2.1"},
                 {
                     "device_name": "R2",
-                    "interface_name": "GigabitEthernet0/1",
+                    "interface_name": "ether4",
                     "router_id": "192.0.2.2",
                 },
             ],
@@ -150,16 +150,21 @@ async def test_ospf_journal_recovers_through_worker_retry_and_restart(tmp_path: 
     ]
     config_file.write_text(yaml.safe_dump(config), encoding="utf-8")
     fixtures = Path("fixtures/logs")
-    cisco = (fixtures / "cisco-ospf-synthetic.log").read_text(encoding="utf-8").splitlines()
-    mikrotik = (fixtures / "mikrotik-ospf-synthetic.log").read_text(encoding="utf-8").splitlines()
-    r1_full = mikrotik[1].replace("Nov 23 19:00:05", "2026-11-23T19:00:06+07:00")
+    mikrotik = (
+        (fixtures / "mikrotik-ospf-dual-synthetic.log").read_text(encoding="utf-8").splitlines()
+    )
     records = []
-    for raw, host in ((mikrotik[0], "R1"), (cisco[0], "R2"), (cisco[1], "R2"), (r1_full, "R1")):
+    for raw, host in (
+        (mikrotik[0], "R1"),
+        (mikrotik[1], "R2"),
+        (mikrotik[5], "R2"),
+        (mikrotik[4], "R1"),
+    ):
         envelope = json.loads(_envelope(1))
         envelope.update(
             received_at="2026-11-23T12:00:08Z",
             raw_message=raw,
-            parse_message=raw.split(">", 1)[-1] if raw.startswith("<") else raw,
+            parse_message=raw.removeprefix("<134>"),
             source_host=host,
         )
         records.append(json.dumps(envelope))
@@ -196,7 +201,7 @@ async def test_ospf_journal_recovers_through_worker_retry_and_restart(tmp_path: 
     final = restarted.correlation.store.ospf_snapshot(key)
     (incident,) = final.incidents
     assert incident.incident_id == saved.incidents[0].incident_id
-    assert incident.recovered_at == datetime(2026, 11, 23, 12, 0, 6, tzinfo=UTC)
+    assert incident.recovered_at == datetime(2026, 11, 23, 12, 0, 7, tzinfo=UTC)
     assert set(incident.event_ids) == set(logs.events)
     assert not alerts.alerts
     assert alerts.ospf == {final.adjacency_id: final}

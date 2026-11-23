@@ -20,7 +20,7 @@ LINK = {
     "area": "0.0.0.0",
     "endpoints": (
         {"device_name": "R1", "interface_name": "ether3", "router_id": "192.0.2.1"},
-        {"device_name": "R2", "interface_name": "Gi0/1", "router_id": "192.0.2.2"},
+        {"device_name": "R2", "interface_name": "ether4", "router_id": "192.0.2.2"},
     ),
 }
 
@@ -49,7 +49,7 @@ def _event(
 ) -> NormalizedEvent:
     event_type, outcome = state.classification
     name = f"R{router}"
-    interface = interface or ("ether3" if router == 1 else "Gi0/1")
+    interface = interface or ("ether3" if router == 1 else "ether4")
     timestamp = BASE_TIME + timedelta(seconds=seconds)
     received = BASE_TIME + timedelta(
         seconds=seconds if received_seconds is None else received_seconds
@@ -58,8 +58,8 @@ def _event(
         schema_version="1.1",
         timestamp=timestamp,
         received_at=received,
-        vendor=EventVendor.MIKROTIK if router == 1 else EventVendor.CISCO,
-        product="RouterOS" if router == 1 else "IOS",
+        vendor=EventVendor.MIKROTIK,
+        product="RouterOS",
         event_type=event_type,
         outcome=outcome,
         severity=EventSeverity.LOW,
@@ -69,8 +69,8 @@ def _event(
         raw_message=f"{name} {interface} {seconds} OSPF {state} {tag}",
         parser_name="synthetic-correlation-fixture",
         routing_protocol="ospf",
-        ospf_area="0.0.0.0" if router == 1 else None,
-        local_router_id="192.0.2.1" if router == 1 else None,
+        ospf_area="0.0.0.0",
+        local_router_id="192.0.2.1" if router == 1 else "192.0.2.2",
         neighbor_router_id=peer_id or ("192.0.2.2" if router == 1 else "192.0.2.1"),
         previous_state=OspfNeighborState.LOADING if state is FULL else FULL,
         current_state=state,
@@ -148,7 +148,13 @@ def test_weak_identity_is_isolated_or_kept_as_telemetry(tmp_path: Path) -> None:
         == 5
     )
     assert local.adjacency.local_interface == ("R1", "ether3")
-    assert not engine.process(_event(DOWN, 4, router=2)).matched
+    peer_side = _snapshot(engine.process(_event(DOWN, 4, router=2)))
+    assert peer_side.adjacency_id != local.adjacency_id
+    assert peer_side.adjacency.local_interface == ("R2", "ether4")
+    incomplete = NormalizedEvent.model_validate(
+        _event(DOWN, 4, router=2).model_dump() | {"local_router_id": None, "ospf_area": None}
+    )
+    assert not engine.process(incomplete).matched
     missing = NormalizedEvent.model_validate(
         _event(DOWN, 5).model_dump() | {"interface_name": None}
     )
@@ -162,7 +168,7 @@ def test_parallel_inventory_links_and_conflicting_metadata(tmp_path: Path) -> No
         "area": "0.0.0.0",
         "endpoints": (
             {"device_name": "R1", "interface_name": "ether4", "router_id": "192.0.2.1"},
-            {"device_name": "R2", "interface_name": "Gi0/2", "router_id": "192.0.2.2"},
+            {"device_name": "R2", "interface_name": "ether5", "router_id": "192.0.2.2"},
         ),
     }
     engine = _engine(tmp_path, links=(LINK, parallel))

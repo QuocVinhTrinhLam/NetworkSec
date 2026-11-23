@@ -46,6 +46,9 @@ BASE_TIME = datetime(2026, 11, 23, 12, tzinfo=UTC)
 FIXTURES = Path("fixtures/logs")
 CISCO = (FIXTURES / "cisco-ospf-synthetic.log").read_text(encoding="utf-8").splitlines()
 MIKROTIK = (FIXTURES / "mikrotik-ospf-synthetic.log").read_text(encoding="utf-8").splitlines()
+MIKROTIK_DUAL = (
+    (FIXTURES / "mikrotik-ospf-dual-synthetic.log").read_text(encoding="utf-8").splitlines()
+)
 
 
 @pytest.fixture
@@ -701,8 +704,9 @@ def test_ospf_notification_migration_reuses_existing_card(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("dual_routeros", [False, True], ids=["mixed-vendor", "dual-routeros"])
 async def test_ospf_spool_to_loki_incident_dashboard_and_telegram(
-    storage: PostgresAlertStorage, ospf_rules_path: Path, tmp_path: Path
+    storage: PostgresAlertStorage, ospf_rules_path: Path, tmp_path: Path, dual_routeros: bool
 ) -> None:
     loki_url = os.getenv("NETWORKSEC_TEST_LOKI_URL")
     if not loki_url:
@@ -712,8 +716,23 @@ async def test_ospf_spool_to_loki_incident_dashboard_and_telegram(
     devices = {side: f"{side}-{run_id}" for side in ("R1", "R2")}
     rules = yaml.safe_load(ospf_rules_path.read_text(encoding="utf-8"))
     for endpoint in rules["ospf"]["links"][0]["endpoints"]:
-        endpoint["device_name"] = devices[endpoint["device_name"]]
+        side = endpoint["device_name"]
+        if dual_routeros and side == "R2":
+            endpoint["interface_name"] = "ether4"
+        endpoint["device_name"] = devices[side]
     ospf_rules_path.write_text(yaml.safe_dump(rules), encoding="utf-8")
+
+    r1_down_sample, r1_full_sample, intermediate_sample = MIKROTIK[:3]
+    r2_down_sample, r2_full_sample = CISCO[:2]
+    if dual_routeros:
+        (
+            r1_down_sample,
+            r2_down_sample,
+            intermediate_sample,
+            _,
+            r1_full_sample,
+            r2_full_sample,
+        ) = MIKROTIK_DUAL
 
     base = datetime.now(UTC).replace(microsecond=0) - timedelta(minutes=2)
     spool = tmp_path / "processor.jsonl"
@@ -749,14 +768,15 @@ async def test_ospf_spool_to_loki_incident_dashboard_and_telegram(
     def envelope(side: str, sample: str, second: int, *, received_second: int = 30) -> str:
         timestamp = base + timedelta(seconds=second)
         host = devices[side]
-        if side == "R1":
+        if side == "R1" or dual_routeros:
             body = sample[sample.index("edge-v2") :]
             message = f"{timestamp.isoformat()} {host} route,ospf,info {body}"
-            pri, source_ip = 134, "198.51.100.1"
+            pri = 134
         else:
             body = sample[sample.index("%OSPF-") :]
             message = f"{timestamp.strftime('%b %d %H:%M:%S')}.001: {body}"
-            pri, source_ip = 189, "198.51.100.2"
+            pri = 189
+        source_ip = "198.51.100.1" if side == "R1" else "198.51.100.2"
         # Match the fields emitted by NetworkSecProcessorEnvelope in rsyslog.
         return json.dumps(
             {
@@ -776,9 +796,9 @@ async def test_ospf_spool_to_loki_incident_dashboard_and_telegram(
             assert await consumer.process_once()
         assert not await consumer.process_once()
 
-    r1_down = envelope("R1", MIKROTIK[0], 1)
-    r1_down_replay = envelope("R1", MIKROTIK[0], 1, received_second=31)
-    r2_down = envelope("R2", CISCO[0], 2)
+    r1_down = envelope("R1", r1_down_sample, 1)
+    r1_down_replay = envelope("R1", r1_down_sample, 1, received_second=31)
+    r2_down = envelope("R2", r2_down_sample, 2)
     consumer = worker()
     await ingest(consumer, r1_down, r2_down, r1_down_replay)
     queue = storage.query_alerts(
@@ -819,6 +839,7 @@ async def test_ospf_spool_to_loki_incident_dashboard_and_telegram(
                 assert len(page["items"]) == 1
                 event = page["items"][0]
                 assert event["schema_version"] == "1.1" and event["event_type"] == event_type
+                assert event["vendor"] == ("mikrotik" if side == "R1" or dual_routeros else "cisco")
                 assert event["event_id"] not in event_ids
                 event_ids.add(event["event_id"])
                 cursor = page["next_cursor"]
@@ -849,6 +870,10 @@ async def test_ospf_spool_to_loki_incident_dashboard_and_telegram(
         )
         opened = client.get(evidence_path).json()
         assert {ref["event_id"] for ref in opened["event_refs"]} == down_ids
+        assert {ref["reporter_router_id"] for ref in opened["event_refs"]} == {
+            "192.0.2.1",
+            "192.0.2.2",
+        }
         detail = client.get(detail_path)
         assert "Awaiting confirmed Full" in detail.text
         csrf = detail.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -859,13 +884,13 @@ async def test_ospf_spool_to_loki_incident_dashboard_and_telegram(
             == 303
         )
 
-        # Restart between Down and Full, then deliver an older IOSv Full out of order.
+        # Restart between Down and Full, then deliver an older R2 Full out of order.
         consumer = worker()
         await ingest(
             consumer,
-            envelope("R1", MIKROTIK[2], 3),
-            envelope("R1", MIKROTIK[1], 4),
-            envelope("R2", CISCO[1], 0),
+            envelope("R1", intermediate_sample, 3),
+            envelope("R1", r1_full_sample, 4),
+            envelope("R2", r2_full_sample, 0),
         )
         pending = client.get(evidence_path).json()
         assert pending["ospf"]["technical_recovered_at"] is None
@@ -878,8 +903,8 @@ async def test_ospf_spool_to_loki_incident_dashboard_and_telegram(
         await OspfNotificationWorker(settings, storage, gateway).run_once()
         assert all("OSPF Neighbor Recovered" not in edit[2] for edit in gateway.edits)
 
-        r2_full = envelope("R2", CISCO[1], 5)
-        r2_full_replay = envelope("R2", CISCO[1], 5, received_second=31)
+        r2_full = envelope("R2", r2_full_sample, 5)
+        r2_full_replay = envelope("R2", r2_full_sample, 5, received_second=31)
         await ingest(consumer, r2_full, r2_full_replay, r2_down)
         health = consumer.state.health()
         assert health is not None and (health.processed_count, health.dead_letter_count) == (9, 0)

@@ -10,6 +10,9 @@ from app.schemas.event import EventOutcome, EventType, EventVendor, NormalizedEv
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "logs"
 CISCO = (FIXTURES / "cisco-ospf-synthetic.log").read_text(encoding="utf-8").splitlines()
 MIKROTIK = (FIXTURES / "mikrotik-ospf-synthetic.log").read_text(encoding="utf-8").splitlines()
+MIKROTIK_DUAL = (
+    (FIXTURES / "mikrotik-ospf-dual-synthetic.log").read_text(encoding="utf-8").splitlines()
+)
 RECEIVED_AT = datetime(2026, 11, 23, 12, 1, tzinfo=UTC)
 UTC_PLUS_7 = timezone(timedelta(hours=7))
 
@@ -85,6 +88,54 @@ def test_mikrotik_ospf_synthetic_fixture(
     assert (event.previous_state, event.current_state) == (previous, current)
     assert (event.event_type, event.vendor_severity) == (event_type, vendor_severity)
     assert event.raw_message == raw
+
+
+@pytest.mark.parametrize(
+    ("line", "device", "interface", "local_id", "peer_id", "event_type"),
+    [
+        (0, "R1", "ether3", "192.0.2.1", "192.0.2.2", EventType.ROUTING_NEIGHBOR_DOWN),
+        (1, "R2", "ether4", "192.0.2.2", "192.0.2.1", EventType.ROUTING_NEIGHBOR_DOWN),
+        (
+            2,
+            "R1",
+            "ether3",
+            "192.0.2.1",
+            "192.0.2.2",
+            EventType.ROUTING_NEIGHBOR_STATE_CHANGE,
+        ),
+        (
+            3,
+            "R2",
+            "ether4",
+            "192.0.2.2",
+            "192.0.2.1",
+            EventType.ROUTING_NEIGHBOR_STATE_CHANGE,
+        ),
+        (4, "R1", "ether3", "192.0.2.1", "192.0.2.2", EventType.ROUTING_NEIGHBOR_UP),
+        (5, "R2", "ether4", "192.0.2.2", "192.0.2.1", EventType.ROUTING_NEIGHBOR_UP),
+    ],
+)
+def test_dual_mikrotik_fixture_stays_on_routeros_parser(
+    line: int,
+    device: str,
+    interface: str,
+    local_id: str,
+    peer_id: str,
+    event_type: EventType,
+) -> None:
+    raw = MIKROTIK_DUAL[line].removeprefix("<134>")
+
+    result = parse_syslog(raw, received_at=RECEIVED_AT, source_host="transport-fallback")
+
+    assert result.status is ParseStatus.PARSED
+    assert result.parser_name == "mikrotik_routeros"
+    event = result.event
+    assert event is not None
+    assert (event.vendor, event.product) == (EventVendor.MIKROTIK, "RouterOS")
+    assert (event.device_name, event.interface_name) == (device, interface)
+    assert (str(event.local_router_id), str(event.neighbor_router_id)) == (local_id, peer_id)
+    assert str(event.ospf_area) == "0.0.0.0"
+    assert event.event_type is event_type
 
 
 @pytest.mark.parametrize(

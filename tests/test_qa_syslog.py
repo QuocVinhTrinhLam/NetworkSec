@@ -212,7 +212,7 @@ def test_reordered_synthetic_outages_areas_and_replay(tmp_path: Path) -> None:
                     "area": "0.0.0.0",
                     "endpoints": [
                         {"device_name": R1, "interface_name": "ether3", "router_id": "192.0.2.1"},
-                        {"device_name": R2, "interface_name": "Gi0/1", "router_id": "192.0.2.2"},
+                        {"device_name": R2, "interface_name": "ether4", "router_id": "192.0.2.2"},
                     ],
                 }
             ],
@@ -228,10 +228,10 @@ def test_reordered_synthetic_outages_areas_and_replay(tmp_path: Path) -> None:
         return parsed
 
     r1_down = event(routeros_ospf(0, "Full", "Down"), R1, 0)
-    r2_down = event(ios_ospf(70, "FULL", "DOWN"), R2, 70)
+    r2_down = event(routeros_ospf(70, "Full", "Down", router=2), R2, 70)
     r1_full = event(routeros_ospf(71, "Loading", "Full"), R1, 71)
-    r2_stale = event(ios_ospf(65, "LOADING", "FULL"), R2, 72)
-    r2_full = event(ios_ospf(73, "LOADING", "FULL"), R2, 74)
+    r2_stale = event(routeros_ospf(65, "Loading", "Full", router=2), R2, 72)
+    r2_full = event(routeros_ospf(73, "Loading", "Full", router=2), R2, 74)
     other_down = event(
         routeros_ospf(1, "Full", "Down", area="0.0.0.1", peer="192.0.2.3", interface="ether4"),
         R1,
@@ -252,6 +252,6 @@ def test_reordered_synthetic_outages_areas_and_replay(tmp_path: Path) -> None:
     assert recovered.incidents[0].incident_id == first.incidents[0].incident_id
     assert recovered.incidents[0].recovered_at == timestamp(73)
     assert engine.process(r2_full).duplicate
-    flap = engine.process(event(ios_ospf(90, "FULL", "DOWN"), R2, 90)).ospf
+    flap = engine.process(event(routeros_ospf(90, "Full", "Down", router=2), R2, 90)).ospf
     assert flap is not None and len(flap.incidents) == 2
     assert flap.incidents[1].recovered_at is None

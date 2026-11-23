@@ -22,6 +22,7 @@ logs/
 /fixtures/logs/*
 !/fixtures/logs/cisco-ospf-synthetic.log
 !/fixtures/logs/mikrotik-ospf-synthetic.log
+!/fixtures/logs/mikrotik-ospf-dual-synthetic.log
 artifacts/
 *.db
 *.db-shm
