@@ -10,6 +10,7 @@ from pathlib import Path
 
 from app.bot.aggregated import AggregatedNotificationWorker
 from app.bot.aiogram_runtime import AiogramBotRuntime
+from app.bot.ospf import OspfNotificationWorker
 from app.bot.telegram import NotificationWorker
 from app.config import get_settings
 from app.db import Database
@@ -41,6 +42,7 @@ async def run() -> None:
     database = Database(settings.database_path)
     database.initialize()
     runtime = AiogramBotRuntime(settings, database)
+    ospf_notifications = None
     if settings.postgres_dsn:
         alert_storage = PostgresAlertStorage(
             settings.postgres_dsn,
@@ -51,6 +53,7 @@ async def run() -> None:
         notifications: NotificationWorker | AggregatedNotificationWorker = (
             AggregatedNotificationWorker(settings, alert_storage, runtime.gateway)
         )
+        ospf_notifications = OspfNotificationWorker(settings, alert_storage, runtime.gateway)
     else:
         notifications = NotificationWorker(settings, database, runtime.gateway)
     silent_watcher = SilentDeviceWatcher(settings, database)
@@ -73,6 +76,16 @@ async def run() -> None:
             _repeat(watch_silent_devices, settings.poll_interval_seconds, "silent_devices")
         ),
     ]
+    if ospf_notifications is not None:
+        tasks.append(
+            asyncio.create_task(
+                _repeat(
+                    ospf_notifications.run_once,
+                    settings.notification_interval_seconds,
+                    "ospf_notifications",
+                )
+            )
+        )
     try:
         await runtime.run()
     finally:

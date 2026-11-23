@@ -1,0 +1,260 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": false,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "network-events-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "id": 1,
+      "title": "Neighbor Down observations",
+      "type": "stat",
+      "description": "Counts normalized observations in the selected time range. Reports from both routers can appear separately.",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 6,
+        "h": 5
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(count_over_time({job=\"network-events\",event_type=\"routing_neighbor_down\"}[$__range])) or vector(0)",
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "network-events-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "id": 2,
+      "title": "Neighbor Full observations",
+      "type": "stat",
+      "description": "Counts normalized observations in the selected time range. Reports from both routers can appear separately.",
+      "gridPos": {
+        "x": 6,
+        "y": 0,
+        "w": 6,
+        "h": 5
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(count_over_time({job=\"network-events\",event_type=\"routing_neighbor_up\"}[$__range])) or vector(0)",
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "network-events-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "id": 3,
+      "title": "Routing event timeline",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 10
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (event_type) (count_over_time({job=\"network-events\",event_type=~\"routing_neighbor_(down|up|state_change)\"}[$__auto]))",
+          "legendFormat": "{{event_type}}",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "network-events-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "id": 4,
+      "title": "Observations by severity",
+      "type": "piechart",
+      "gridPos": {
+        "x": 0,
+        "y": 5,
+        "w": 12,
+        "h": 5
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "right",
+          "showLegend": true
+        },
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (severity) (count_over_time({job=\"network-events\",event_type=~\"routing_neighbor_(down|up|state_change)\"}[$__range]))",
+          "legendFormat": "{{severity}}",
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "network-events-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "id": 5,
+      "title": "Observations by vendor and device",
+      "description": "Top 15 combinations. Device is extracted at query time from the event JSON.",
+      "type": "bargauge",
+      "gridPos": {
+        "x": 0,
+        "y": 10,
+        "w": 24,
+        "h": 8
+      },
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "expr": "topk(15, sum by (vendor, device_name) (count_over_time({job=\"network-events\",event_type=~\"routing_neighbor_(down|up|state_change)\"} | json device_name=\"device_name\" | __error__=\"\" [$__range])))",
+          "legendFormat": "{{vendor}} · {{device_name}}",
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "network-events-loki"
+      },
+      "id": 6,
+      "title": "OSPF routing logs",
+      "description": "Inspect AREA, Router ID, and state in normalized JSON. Use a bounded time range in Explore for incident investigation.",
+      "type": "logs",
+      "gridPos": {
+        "x": 0,
+        "y": 18,
+        "w": 24,
+        "h": 13
+      },
+      "options": {
+        "dedupStrategy": "none",
+        "enableInfiniteScrolling": false,
+        "prettifyLogMessage": true,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "targets": [
+        {
+          "expr": "{job=\"network-events\",event_type=~\"routing_neighbor_(down|up|state_change)\"} | json device_name=\"device_name\", ospf_area=\"ospf_area\", neighbor_router_id=\"neighbor_router_id\", current_state=\"current_state\"",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 41,
+  "tags": [
+    "network",
+    "ospf",
+    "loki"
+  ],
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "title": "OSPF Observability",
+  "uid": "network-ospf-observability",
+  "version": 1
+}

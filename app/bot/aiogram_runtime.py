@@ -21,6 +21,7 @@ from aiogram.exceptions import (
 )
 from aiogram.types import BotCommand, CallbackQuery, InlineKeyboardMarkup, Message
 
+from app.bot.notification_models import TelegramSendDeferred
 from app.bot.telegram import BotCommandHandler, PermanentTelegramError
 from app.config import Settings
 from app.db import Database
@@ -96,6 +97,27 @@ class AiogramGateway:
                 raise
 
         await self._retry(edit)
+
+    async def send_message_once(
+        self, chat_id: int, text: str, reply_markup: dict[str, Any] | None = None
+    ) -> int:
+        """Keep an ambiguous first send from being replayed by the transport."""
+        try:
+            message = await self.bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                reply_markup=_markup(reply_markup),
+            )
+        except TelegramRetryAfter as error:
+            raise TelegramSendDeferred(error.retry_after) from None
+        except (
+            TelegramBadRequest,
+            TelegramForbiddenError,
+            TelegramNotFound,
+            TelegramUnauthorizedError,
+        ):
+            raise PermanentTelegramError("Telegram rejected the send request") from None
+        return message.message_id
 
     async def get_updates(self, offset: int | None = None) -> list[dict[str, Any]]:
         updates = await self._retry(

@@ -7,8 +7,19 @@ from datetime import UTC, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from app.bot.notification_models import OspfNotification, OspfNotificationKind
+
 EMOJI = {"low": "🔵", "medium": "🟡", "high": "🟠", "critical": "🔴"}
 TELEGRAM_TEXT_LIMIT = 4096
+OSPF_TITLE = {
+    OspfNotificationKind.DOWN: "OSPF Neighbor Down",
+    OspfNotificationKind.RECOVERED: "OSPF Neighbor Recovered",
+    OspfNotificationKind.RECOVERY_RETRACTED: "OSPF recovery no longer confirmed",
+    OspfNotificationKind.ACKNOWLEDGED: "OSPF incident acknowledged",
+    OspfNotificationKind.OPERATOR_RESOLVED: "OSPF incident resolved by operator",
+    OspfNotificationKind.OPERATOR_REOPENED: "OSPF incident reopened by operator",
+    OspfNotificationKind.SUPERSEDED: "OSPF incident superseded",
+}
 
 
 def _nested(value: dict[str, Any], path: str) -> Any:
@@ -65,6 +76,25 @@ def _mitre_text(alert: dict[str, Any]) -> str:
         if values:
             return ", ".join(values)
     return str(_pick(alert, "mitre_id", fallback="-"))
+
+
+def format_ospf_notification(claim: OspfNotification, timezone_name: str) -> str:
+    adjacency = claim.adjacency
+    first, second = adjacency.router_ids
+    link = adjacency.link_id or " / ".join(adjacency.local_interface or ())
+    severity = claim.severity.value
+    lines = [
+        f"{EMOJI[severity]} <b>[{severity.upper()}] {OSPF_TITLE[claim.kind]}</b>",
+        f"Router IDs <code>{first}</code> ↔ <code>{second}</code> "
+        f"· Area <code>{adjacency.area}</code>",
+        f"Scope {_safe(adjacency.scope)} · Link {_safe(link)}",
+        f"First Down {_local_time(claim.first_seen.isoformat(), timezone_name)}",
+        f"Transition {_local_time(claim.occurred_at.isoformat(), timezone_name)}",
+        f"Incident <code>{_safe(claim.aggregate_id[:12])}</code>",
+    ]
+    if claim.actor:
+        lines.append(f"Operator {_safe(claim.actor, limit=160)}")
+    return "\n".join(lines)
 
 
 def format_alert(

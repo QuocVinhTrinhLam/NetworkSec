@@ -4,7 +4,7 @@
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
   "id": null,
-  "links": [],
+  "links": [{"type": "dashboards", "title": "OSPF Observability", "tags": ["ospf"], "includeVars": false, "keepTime": true}],
   "panels": [
     {
       "datasource": {"type": "loki", "uid": "network-events-loki"},
@@ -42,7 +42,7 @@
   "templating": {
     "list": [
       {"current": {"selected": true, "text": "All", "value": ".*"}, "hide": 0, "includeAll": false, "label": "Severity", "name": "severity", "options": [{"selected": true, "text": "All", "value": ".*"}, {"selected": false, "text": "Critical", "value": "critical"}, {"selected": false, "text": "High", "value": "high"}, {"selected": false, "text": "Medium", "value": "medium"}, {"selected": false, "text": "Low", "value": "low"}], "query": ".*,critical,high,medium,low", "type": "custom"},
-      {"current": {"selected": true, "text": "All", "value": ".*"}, "hide": 0, "includeAll": false, "label": "Event type", "name": "event_type", "options": [{"selected": true, "text": "All", "value": ".*"}], "query": ".*,link_up,link_down,port_flap,routing_neighbor_down,configuration_change,login_failure,acl_deny,port_security", "type": "custom"},
+      {"current": {"selected": true, "text": "All", "value": ".*"}, "hide": 0, "includeAll": false, "label": "Event type", "name": "event_type", "options": [{"selected": true, "text": "All", "value": ".*"}], "query": ".*,link_up,link_down,port_flap,routing_neighbor_down,routing_neighbor_up,routing_neighbor_state_change,configuration_change,login_failure,acl_deny,port_security", "type": "custom"},
       {"current": {"selected": true, "text": ".*", "value": ".*"}, "hide": 0, "label": "Device regex", "name": "device", "options": [{"selected": true, "text": ".*", "value": ".*"}], "query": ".*", "type": "textbox"}
     ]
   },
