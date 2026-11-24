@@ -10,6 +10,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    IPvAnyAddress,
     StrictBool,
     StrictInt,
     StrictStr,
@@ -56,6 +57,7 @@ class OspfEndpoint(BaseModel):
     router_id: IPv4Address
     device_name: BoundedName
     interface_name: BoundedName
+    source_addresses: Annotated[tuple[IPvAnyAddress, ...], Field(max_length=32)] = ()
 
 
 class OspfLink(BaseModel):

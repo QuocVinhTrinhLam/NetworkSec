@@ -17,9 +17,11 @@ from app.parsers.dispatcher import parse_syslog
 from app.processor.state import Checkpoint, FileIdentity, ProcessorStateStore
 from app.schemas.correlation import OspfCorrelationSnapshot
 from app.schemas.event import MAX_RAW_MESSAGE_BYTES, ParseStatus
+from app.services.backend import syslog_priority
 from app.services.correlation import CorrelationEngine
 from app.services.storage import StorageWriter
-from app.storage.base import LogStorage, StorageError
+from app.storage.backend import PostgresBackendStorage
+from app.storage.base import LogEntryTooFarBehindError, LogStorage, StorageError
 
 LOGGER = logging.getLogger(__name__)
 RECONCILIATION_FAILURE = "OSPF projection reconciliation failed"
@@ -70,6 +72,7 @@ class ProcessingWorker:
         logs: LogStorage,
         writer: StorageWriter,
         source_timezone: tzinfo,
+        catalog: PostgresBackendStorage | None = None,
         poll_interval_seconds: float = 0.25,
         retry_interval_seconds: float = 2.0,
     ) -> None:
@@ -81,6 +84,7 @@ class ProcessingWorker:
         self.logs = logs
         self.writer = writer
         self.source_timezone = source_timezone
+        self.catalog = catalog
         self.poll_interval_seconds = poll_interval_seconds
         self.retry_interval_seconds = retry_interval_seconds
         self._ospf_reconciled = False
@@ -132,14 +136,49 @@ class ProcessingWorker:
             return True
 
         try:
-            correlation = await asyncio.to_thread(self.correlation.process, parsed.event)
-            if correlation.matched and correlation.alert is not None:
-                await self.writer.persist(parsed.event, correlation.alert)
+            source_path = record.checkpoint.source_path
+            event_id = parsed.event.event_id
+            if not self.state.loki_accepted(source_path, event_id):
+                try:
+                    await self.logs.push_event(parsed.event)
+                except LogEntryTooFarBehindError:
+                    self.state.dead_letter(
+                        record.checkpoint,
+                        record.payload,
+                        "loki_entry_too_far_behind",
+                        start_offset=record.start_offset,
+                    )
+                    return True
+                self.state.record_loki_acceptance(source_path, event_id)
+            correlation = await asyncio.to_thread(
+                self.correlation.process, parsed.event, collector_source=envelope.source_ip
+            )
+            if correlation.ospf is not None:
+                await self._require_ospf_receipts(correlation.ospf, event_id)
+            if self.catalog is not None:
+                priority, raw_prefix = syslog_priority(
+                    envelope.raw_message, parsed.event.raw_message
+                )
+                await asyncio.to_thread(
+                    self.catalog.record_event,
+                    parsed.event,
+                    envelope.source_ip,
+                    priority,
+                    raw_prefix,
+                    self.correlation.config.ospf,
+                    not correlation.matched
+                    and correlation.ospf is None
+                    and not any(
+                        rule.enabled and parsed.event.event_type in rule.event_types
+                        for rule in self.correlation.config.rules
+                    ),
+                    alert=correlation.alert if correlation.matched else None,
+                    ospf_snapshot=correlation.ospf,
+                )
+            elif correlation.matched and correlation.alert is not None:
+                await self.writer.persist_alert_state(parsed.event, correlation.alert)
             elif correlation.ospf is not None:
-                await self._require_ospf_receipts(correlation.ospf, parsed.event.event_id)
-                await self.writer.persist_ospf(parsed.event, correlation.ospf)
-            else:
-                await self.logs.push_event(parsed.event)
+                await self.writer.reconcile_ospf(correlation.ospf)
         except Exception as exc:
             detail = f"{type(exc).__name__}: downstream processing failed"
             self.state.mark_blocked(detail)
@@ -180,8 +219,8 @@ class ProcessingWorker:
             try:
                 processed = await self.process_once()
                 delay = 0.0 if processed else self.poll_interval_seconds
-            except Exception:
-                LOGGER.exception("processor record failed; checkpoint retained for retry")
+            except Exception as exc:
+                LOGGER.error("processor retained checkpoint for retry (%s)", type(exc).__name__)
                 delay = self.retry_interval_seconds
             if delay:
                 try:

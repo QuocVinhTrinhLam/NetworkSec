@@ -440,13 +440,15 @@ class CorrelationEngine:
         store.initialize()
         return cls(store, load_correlation_config(config_path))
 
-    def process(self, event: NormalizedEvent) -> CorrelationResult:
+    def process(
+        self, event: NormalizedEvent, *, collector_source: str | None = None
+    ) -> CorrelationResult:
         ospf = self.config.ospf
         if ospf is not None and ospf.enabled and event.event_type in OSPF_EVENT_TYPES:
             if event.current_state not in (OspfNeighborState.DOWN, OspfNeighborState.FULL):
                 return CorrelationResult(matched=False, reason="no OSPF outage transition")
             try:
-                identity = resolve_ospf_identity(event, ospf)
+                identity = resolve_ospf_identity(event, ospf, collector_source)
             except ValueError as exc:
                 return CorrelationResult(matched=False, reason=str(exc))
             return self.store.persist_ospf(

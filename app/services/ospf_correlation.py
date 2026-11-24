@@ -16,6 +16,7 @@ from app.schemas.correlation import (
     OspfReporterState,
 )
 from app.schemas.event import NormalizedEvent, OspfNeighborState
+from app.services.backend import transport_address
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,7 +25,9 @@ class OspfIdentity:
     reporter: IPv4Address
 
 
-def resolve_ospf_identity(event: NormalizedEvent, config: OspfCorrelationConfig) -> OspfIdentity:
+def resolve_ospf_identity(
+    event: NormalizedEvent, config: OspfCorrelationConfig, collector_source: str | None = None
+) -> OspfIdentity:
     peer = event.neighbor_router_id
     if event.routing_protocol != "ospf" or peer is None:
         raise ValueError("missing OSPF protocol or peer router ID")
@@ -32,6 +35,7 @@ def resolve_ospf_identity(event: NormalizedEvent, config: OspfCorrelationConfig)
         raise ValueError("missing OSPF reporting device or interface")
 
     source = (event.device_name, event.interface_name)
+    collector_ip = transport_address(collector_source)
     matches: list[OspfIdentity] = []
     configured_endpoint = False
     for link in config.links:
@@ -44,6 +48,10 @@ def resolve_ospf_identity(event: NormalizedEvent, config: OspfCorrelationConfig)
                 remote.router_id != peer
                 or event.local_router_id not in (None, local.router_id)
                 or event.ospf_area not in (None, link.area)
+                or (
+                    local.source_addresses
+                    and all(str(address) != collector_ip for address in local.source_addresses)
+                )
             ):
                 continue
             matches.append(

@@ -31,6 +31,10 @@ class StorageUnavailableError(StorageError):
     """A configured storage backend is temporarily unreachable."""
 
 
+class LogEntryTooFarBehindError(StorageError):
+    """A log entry is older than the storage stream's ordering window."""
+
+
 class InvalidCursorError(StorageError):
     """An opaque client pagination cursor is invalid or corrupted."""
 

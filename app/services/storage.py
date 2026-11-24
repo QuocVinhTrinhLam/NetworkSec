@@ -19,11 +19,12 @@ class StorageWriter:
 
     async def persist(self, event: NormalizedEvent, alert: AggregatedAlert) -> AlertRecord:
         await self.logs.push_event(event)
-        return await run_in_threadpool(self.alerts.upsert_alert, alert, event)
+        return await self.persist_alert_state(event, alert)
 
-    async def persist_ospf(self, event: NormalizedEvent, snapshot: OspfCorrelationSnapshot) -> None:
-        await self.logs.push_event(event)
-        await self.reconcile_ospf(snapshot)
+    async def persist_alert_state(
+        self, event: NormalizedEvent, alert: AggregatedAlert
+    ) -> AlertRecord:
+        return await run_in_threadpool(self.alerts.upsert_alert, alert, event)
 
     async def reconcile_ospf(self, snapshot: OspfCorrelationSnapshot) -> None:
         await run_in_threadpool(self.alerts.apply_ospf_snapshot, snapshot)

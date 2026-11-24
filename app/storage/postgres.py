@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime, timedelta
 from ipaddress import IPv4Interface
 from pathlib import Path
@@ -25,6 +25,7 @@ from app.schemas.correlation import (
     OspfReporterState,
 )
 from app.schemas.event import EventSeverity, EventType, NormalizedEvent
+from app.services.backend import request_id
 from app.storage.base import (
     AlertEvidence,
     AlertListMetadata,
@@ -43,6 +44,10 @@ VISIBLE_ALERT = """
         SELECT 1 FROM ospf_incidents
         WHERE ospf_incidents.aggregate_id = aggregated_alerts.aggregate_id
           AND superseded_at IS NOT NULL
+    )
+    AND NOT EXISTS (
+        SELECT 1 FROM interface_up_only_aggregates
+        WHERE interface_up_only_aggregates.aggregate_id = aggregated_alerts.aggregate_id
     )
 """
 SEVERITY_RANK = {
@@ -70,6 +75,7 @@ class PostgresAlertStorage:
                 connect_timeout=self.connect_timeout,
                 row_factory=dict_row,
             ) as connection:
+                connection.execute("SET TIME ZONE 'UTC'")
                 yield connection
         except psycopg.OperationalError as exc:
             raise StorageUnavailableError("PostgreSQL is unavailable") from exc
@@ -110,10 +116,16 @@ class PostgresAlertStorage:
                     (path.name, checksum),
                 )
 
-    def upsert_alert(self, alert: AggregatedAlert, event: NormalizedEvent) -> AlertRecord:
+    def upsert_alert(
+        self,
+        alert: AggregatedAlert,
+        event: NormalizedEvent,
+        *,
+        transaction: psycopg.Connection[Any] | None = None,
+    ) -> AlertRecord:
         """Create/update aggregate state and its immutable Loki event reference."""
         now = datetime.now(UTC)
-        with self._connect() as connection:
+        with nullcontext(transaction) if transaction is not None else self._connect() as connection:
             connection.execute(
                 """
                 INSERT INTO aggregated_alerts (
@@ -127,7 +139,12 @@ class PostgresAlertStorage:
                     %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                 )
                 ON CONFLICT (aggregate_id) DO UPDATE SET
-                    event_types = EXCLUDED.event_types,
+                    event_types = (
+                        SELECT jsonb_agg(DISTINCT kind ORDER BY kind)
+                        FROM jsonb_array_elements_text(
+                            aggregated_alerts.event_types || EXCLUDED.event_types
+                        ) AS event_kind(kind)
+                    ),
                     event_count = GREATEST(aggregated_alerts.event_count, EXCLUDED.event_count),
                     first_seen = LEAST(aggregated_alerts.first_seen, EXCLUDED.first_seen),
                     last_seen = GREATEST(aggregated_alerts.last_seen, EXCLUDED.last_seen),
@@ -205,10 +222,15 @@ class PostgresAlertStorage:
             raise StorageError("PostgreSQL did not return the upserted alert")
         return _record(row)
 
-    def apply_ospf_snapshot(self, snapshot: OspfCorrelationSnapshot) -> bool:
+    def apply_ospf_snapshot(
+        self,
+        snapshot: OspfCorrelationSnapshot,
+        *,
+        transaction: psycopg.Connection[Any] | None = None,
+    ) -> bool:
         """Apply a newer complete adjacency projection in one transaction."""
         now = datetime.now(UTC)
-        with self._connect() as connection:
+        with nullcontext(transaction) if transaction is not None else self._connect() as connection:
             accepted = connection.execute(
                 """
                 INSERT INTO ospf_adjacencies (adjacency_id, adjacency_key, revision)
@@ -445,9 +467,14 @@ class PostgresAlertStorage:
                 """
                 SELECT event_id, event_timestamp, event_type, host(source_ip) AS source_ip
                 FROM alert_event_refs WHERE aggregate_id = %s
+                UNION
+                SELECT recovery.event_id, ref.event_timestamp, ref.event_type, host(ref.source_ip)
+                FROM interface_link_recoveries AS recovery JOIN alert_event_refs AS ref
+                  USING (event_id)
+                WHERE recovery.aggregate_id = %s
                 ORDER BY event_timestamp, event_id
                 """,
-                (aggregate_id,),
+                (aggregate_id, aggregate_id),
             )
             return AlertEvidence(
                 _record(row),
@@ -585,6 +612,10 @@ class PostgresAlertStorage:
         lifecycle = AlertLifecycleStatus(status)
         now = datetime.now(UTC)
         with self._connect() as connection:
+            if audit_request := request_id.get():
+                connection.execute(
+                    "SELECT set_config('networksec.request_id', %s, true)", (str(audit_request),)
+                )
             if lifecycle is AlertLifecycleStatus.ACKNOWLEDGED:
                 # Check the current state under the same row lock used by Resolve.
                 current = connection.execute(

@@ -15,8 +15,8 @@ from app.processor.state import ProcessorStateStore
 from app.processor.worker import ProcessingWorker
 from app.services.correlation import CorrelationEngine
 from app.services.storage import StorageWriter
+from app.storage.backend import PostgresBackendStorage
 from app.storage.loki import LokiLogStorage
-from app.storage.postgres import PostgresAlertStorage
 
 LOGGER = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ async def _run() -> None:
         settings.correlation_database_path,
         settings.correlation_rules_path,
     )
-    alerts = PostgresAlertStorage(
+    alerts = PostgresBackendStorage(
         settings.postgres_dsn,
         settings.postgres_migrations_path,
         connect_timeout=settings.postgres_connect_timeout_seconds,
@@ -58,6 +58,7 @@ async def _run() -> None:
             correlation=correlation,
             logs=logs,
             writer=StorageWriter(logs, alerts),
+            catalog=alerts,
             source_timezone=source_timezone,
             poll_interval_seconds=settings.processor_poll_interval_seconds,
             retry_interval_seconds=settings.processor_retry_interval_seconds,

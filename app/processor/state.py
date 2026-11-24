@@ -54,6 +54,11 @@ CREATE TABLE IF NOT EXISTS processor_event_receipts (
 CREATE INDEX IF NOT EXISTS idx_processor_event_receipts_source
     ON processor_event_receipts(source_path, file_device, file_inode, start_offset);
 
+CREATE TABLE IF NOT EXISTS processor_pending_loki (
+    source_path TEXT PRIMARY KEY,
+    event_id TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS processor_health (
     singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
     status TEXT NOT NULL,
@@ -151,6 +156,26 @@ class ProcessorStateStore:
         ):
             offset = int(row["byte_offset"])
         return Checkpoint(canonical, identity, offset)
+
+    def loki_accepted(self, source_path: str, event_id: str) -> bool:
+        with self.connect() as connection:
+            return (
+                connection.execute(
+                    "SELECT 1 FROM processor_pending_loki WHERE source_path = ? AND event_id = ?",
+                    (source_path, event_id),
+                ).fetchone()
+                is not None
+            )
+
+    def record_loki_acceptance(self, source_path: str, event_id: str) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO processor_pending_loki (source_path, event_id) VALUES (?, ?)
+                ON CONFLICT(source_path) DO UPDATE SET event_id = excluded.event_id
+                """,
+                (source_path, event_id),
+            )
 
     def advance(
         self,
@@ -307,6 +332,10 @@ class ProcessorStateStore:
     def _upsert_checkpoint(
         connection: sqlite3.Connection, checkpoint: Checkpoint, now: str
     ) -> None:
+        connection.execute(
+            "DELETE FROM processor_pending_loki WHERE source_path = ?",
+            (checkpoint.source_path,),
+        )
         connection.execute(
             """
             INSERT INTO processor_checkpoints(

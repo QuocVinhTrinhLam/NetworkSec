@@ -17,6 +17,7 @@ from app.storage.base import (
     EventPage,
     EventQuery,
     InvalidCursorError,
+    LogEntryTooFarBehindError,
     StorageError,
     StorageUnavailableError,
 )
@@ -71,6 +72,11 @@ class LokiLogStorage:
             ]
         }
         response = await self._request("POST", "/loki/api/v1/push", json=payload)
+        if (
+            response.status_code == 400
+            and "entry too far behind, entry timestamp is:" in response.text
+        ):
+            raise LogEntryTooFarBehindError("Loki rejected a log entry outside its ordering window")
         if response.status_code not in {200, 204}:
             raise StorageError(f"Loki push failed with HTTP {response.status_code}")
 
