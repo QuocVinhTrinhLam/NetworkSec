@@ -7,6 +7,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import httpx
 import pytest
 import yaml
 
@@ -18,7 +19,8 @@ from app.schemas.correlation import AggregatedAlert, OspfCorrelationSnapshot
 from app.schemas.event import EventType, NormalizedEvent
 from app.services.correlation import CorrelationEngine
 from app.services.storage import StorageWriter
-from app.storage.base import StorageError
+from app.storage.base import LogEntryTooFarBehindError, StorageError
+from app.storage.loki import LokiLogStorage
 
 BASE_TIME = datetime(2026, 11, 20, 12, 0, tzinfo=UTC)
 
@@ -81,7 +83,7 @@ def _envelope(sequence: int) -> bytes:
 
 def _worker(
     root: Path,
-    logs: RecordingLogs,
+    logs: RecordingLogs | LokiLogStorage,
     alerts: RecordingAlerts,
     correlation_config: Path = Path("config/correlation_rules.yaml"),
 ) -> ProcessingWorker:
@@ -128,6 +130,66 @@ async def test_ospf_transitions_reach_event_storage_through_the_worker(tmp_path:
     ]
     assert all(event.schema_version == "1.1" for event in logs.events.values())
     assert not alerts.alerts
+
+
+@pytest.mark.asyncio
+async def test_loki_rejected_late_telemetry_preserves_evidence_and_drains_spool(
+    tmp_path: Path,
+) -> None:
+    fixture = Path("fixtures/logs/mikrotik-ospf-dual-synthetic.log")
+    raw = fixture.read_text(encoding="utf-8").splitlines()[3]
+    envelope = json.loads(_envelope(1))
+    envelope.update(raw_message=raw, parse_message=raw.removeprefix("<134>"))
+    late_record = json.dumps(envelope).encode() + b"\n"
+    records = late_record + _envelope(1)
+    spool = tmp_path / "processor.jsonl"
+    spool.write_bytes(records)
+    event_types = []
+
+    def reject_late_telemetry(request: httpx.Request) -> httpx.Response:
+        event_type = json.loads(request.content)["streams"][0]["stream"]["event_type"]
+        event_types.append(event_type)
+        if event_type == EventType.ROUTING_NEIGHBOR_STATE_CHANGE:
+            return httpx.Response(
+                400,
+                text="entry too far behind, entry timestamp is: 2026-11-23T12:00:03Z, "
+                "oldest acceptable timestamp is: 2026-11-23T13:45:42Z",
+            )
+        return httpx.Response(204)
+
+    alerts = RecordingAlerts()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(reject_late_telemetry)) as client:
+        worker = _worker(tmp_path, LokiLogStorage("http://loki:3100", client=client), alerts)
+        await _drain(worker, 2)
+
+    with worker.state.connect() as connection:
+        dead_letter = connection.execute(
+            "SELECT reason, record FROM processor_dead_letters"
+        ).fetchone()
+        checkpoint = connection.execute("SELECT byte_offset FROM processor_checkpoints").fetchone()
+    assert tuple(dead_letter) == ("loki_entry_too_far_behind", late_record)
+    assert checkpoint["byte_offset"] == len(records)
+    assert event_types == [EventType.ROUTING_NEIGHBOR_STATE_CHANGE, EventType.LINK_DOWN]
+    assert len(alerts.alerts) == 1
+    assert spool.read_bytes() == records
+
+
+@pytest.mark.asyncio
+async def test_rejected_correlated_event_leaves_no_journal_member(tmp_path: Path) -> None:
+    class RejectFirst(RecordingLogs):
+        async def push_event(self, event: NormalizedEvent) -> None:
+            if event.timestamp == BASE_TIME + timedelta(milliseconds=500):
+                raise LogEntryTooFarBehindError("fixture outside ordering window")
+            await super().push_event(event)
+
+    spool = tmp_path / "processor.jsonl"
+    spool.write_bytes(_envelope(1) + _envelope(3))
+    worker = _worker(tmp_path, RejectFirst(), RecordingAlerts())
+    await _drain(worker, 2)
+    (aggregate,) = worker.correlation.store.list_alerts()
+    assert aggregate.count == 1
+    health = worker.state.health()
+    assert health is not None and (health.processed_count, health.dead_letter_count) == (1, 1)
 
 
 @pytest.mark.asyncio
@@ -178,21 +240,25 @@ async def test_ospf_journal_recovers_through_worker_retry_and_restart(tmp_path: 
     with pytest.raises(RuntimeError, match="injected Loki failure"):
         await first_worker.process_once()
     assert not logs.events
-    (key,) = first_worker.correlation.store.list_ospf_adjacencies()
-    saved = first_worker.correlation.store.ospf_snapshot(key)
-    assert saved.incidents[0].recovered_at is None
+    assert not first_worker.correlation.store.list_ospf_adjacencies()
     assert not alerts.ospf
 
     alerts.fail_next = True
     with pytest.raises(RuntimeError, match="injected PostgreSQL failure"):
         await first_worker.process_once()
     assert len(logs.events) == 1
+    (key,) = first_worker.correlation.store.list_ospf_adjacencies()
+    saved = first_worker.correlation.store.ospf_snapshot(key)
+    assert saved.incidents[0].recovered_at is None
     assert not alerts.ospf
     health = first_worker.state.health()
     assert health is not None and health.processed_count == 0
 
     restarted = _worker(tmp_path, logs, alerts, config_file)
+    logs.fail_next = True
     assert await restarted.process_once()
+    assert logs.fail_next  # The accepted Loki write survives the processor restart.
+    logs.fail_next = False
     assert restarted.correlation.store.ospf_snapshot(key) == saved
     assert await restarted.process_once()
     assert await restarted.process_once()

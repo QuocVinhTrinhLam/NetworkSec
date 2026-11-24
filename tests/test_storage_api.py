@@ -242,11 +242,13 @@ def test_events_api_opts_into_ospf_with_legacy_items(tmp_path: Path) -> None:
         extended = client.get("/api/v1/events", params={"include_ospf": True})
 
     assert default.status_code == extended.status_code == 200
-    assert default.json()["items"] == [_event().model_dump(mode="json")]
+    safe_legacy = _event().model_dump(mode="json", exclude={"raw_message"})
+    safe_ospf = ospf.model_dump(mode="json", exclude={"raw_message"})
+    assert default.json()["items"] == [{**safe_legacy, "raw_message": "[restricted]"}]
     assert extended.json()["schema_version"] == "1.0"
     assert extended.json()["items"] == [
-        _event().model_dump(mode="json"),
-        ospf.model_dump(mode="json"),
+        {**safe_legacy, "raw_message": "[restricted]"},
+        {**safe_ospf, "raw_message": "[restricted]"},
     ]
     assert extended.json()["items"][1]["current_state"] == "FULL"
     assert logs.query is not None and logs.query.schema_version is None
@@ -293,6 +295,11 @@ def test_alert_api_accepts_operational_metadata_filters(tmp_path: Path) -> None:
             params={"source_ip": "2001:0db8::1", "rule_id": "interface-link-state", "search": "%_"},
         )
         assert client.get("/api/v1/alerts?source_ip=not-an-address").status_code == 422
+        assert client.get("/api/v1/alerts", params={"search": "invalid\x00name"}).status_code == 422
+        assert client.get("/api/v1/alerts", params={"page": 1001}).status_code == 422
+        assert (
+            client.get("/api/v1/alerts", params={"end": "0001-01-01T00:00:00Z"}).status_code == 422
+        )
 
     assert response.status_code == 200
     assert alerts.query is not None

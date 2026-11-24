@@ -36,6 +36,7 @@ from app.schemas.correlation import OspfCorrelationSnapshot
 from app.schemas.event import EventSeverity, NormalizedEvent
 from app.services.correlation import CorrelationEngine
 from app.services.storage import StorageWriter
+from app.storage.backend import PostgresBackendStorage
 from app.storage.base import AlertQuery, StorageError
 from app.storage.loki import LokiLogStorage
 from app.storage.postgres import PostgresAlertStorage
@@ -706,7 +707,11 @@ def test_ospf_notification_migration_reuses_existing_card(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("dual_routeros", [False, True], ids=["mixed-vendor", "dual-routeros"])
 async def test_ospf_spool_to_loki_incident_dashboard_and_telegram(
-    storage: PostgresAlertStorage, ospf_rules_path: Path, tmp_path: Path, dual_routeros: bool
+    storage: PostgresAlertStorage,
+    isolated_dsn: str,
+    ospf_rules_path: Path,
+    tmp_path: Path,
+    dual_routeros: bool,
 ) -> None:
     loki_url = os.getenv("NETWORKSEC_TEST_LOKI_URL")
     if not loki_url:
@@ -720,6 +725,7 @@ async def test_ospf_spool_to_loki_incident_dashboard_and_telegram(
         if dual_routeros and side == "R2":
             endpoint["interface_name"] = "ether4"
         endpoint["device_name"] = devices[side]
+        endpoint["source_addresses"] = ["198.51.100.1" if side == "R1" else "198.51.100.2"]
     ospf_rules_path.write_text(yaml.safe_dump(rules), encoding="utf-8")
 
     r1_down_sample, r1_full_sample, intermediate_sample = MIKROTIK[:3]
@@ -739,6 +745,7 @@ async def test_ospf_spool_to_loki_incident_dashboard_and_telegram(
     processor_db = tmp_path / "processor.db"
     journal = tmp_path / "correlation.db"
     loki = LokiLogStorage(loki_url)
+    catalog = PostgresBackendStorage(isolated_dsn, MIGRATIONS)
     storage_writer = StorageWriter(loki, storage)
     settings = Settings(
         database_path=tmp_path / "web.db",
@@ -749,6 +756,8 @@ async def test_ospf_spool_to_loki_incident_dashboard_and_telegram(
         allowed_chat_ids={10},
         minimum_severity="medium",
         app_url="https://dashboard.example.com",
+        postgres_dsn=isolated_dsn,
+        correlation_rules_path=ospf_rules_path,
     )
     app = create_app(settings, log_storage=loki, alert_storage=storage)
     gateway = FakeOspfGateway()
@@ -762,6 +771,7 @@ async def test_ospf_spool_to_loki_incident_dashboard_and_telegram(
             correlation=CorrelationEngine.from_files(journal, ospf_rules_path),
             logs=loki,
             writer=storage_writer,
+            catalog=catalog,
             source_timezone=UTC,
         )
 
@@ -865,6 +875,11 @@ async def test_ospf_spool_to_loki_incident_dashboard_and_telegram(
             == 303
         )
         assert client.get("/api/v1/storage/health").json()["status"] == "ok"
+        down_topology = client.get("/api/v1/topology")
+        assert down_topology.status_code == 200, down_topology.text
+        (down_link,) = down_topology.json()["links"]
+        assert down_link["status"] == "down"
+        assert down_link["related_incident_ids"] == [incident_id]
         down_ids = page_event_ids("R1", "routing_neighbor_down") | page_event_ids(
             "R2", "routing_neighbor_down"
         )
@@ -934,6 +949,17 @@ async def test_ospf_spool_to_loki_incident_dashboard_and_telegram(
             "R2", "routing_neighbor_up", "routing_neighbor_down", "routing_neighbor_up"
         )
         assert len(observed_ids) == 6 and r1_pending_ids | r2_pending_ids < observed_ids
+        (recovered_link,) = client.get("/api/v1/topology").json()["links"]
+        assert recovered_link["id"] == down_link["id"] and recovered_link["status"] == "up"
+        summary = client.get("/api/v1/dashboard/summary", params={"start": base.isoformat()})
+        assert summary.status_code == 200, summary.text
+        assert summary.json()["total_events"] == 6
+        assert summary.json()["resolved_incidents"] == 1
+        for event_id in down_ids:
+            event_detail = client.get(f"/api/v1/events/{event_id}", params={"include_raw": True})
+            assert event_detail.status_code == 200, event_detail.text
+            assert event_detail.json()["related_incident_ids"] == [incident_id]
+            assert event_detail.json()["event"]["collector_ip"] in {"198.51.100.1", "198.51.100.2"}
         for device in devices.values():
             params = {"start": base.isoformat(), "device_name": device}
             assert client.get("/api/v1/events", params=params).json()["items"] == []
