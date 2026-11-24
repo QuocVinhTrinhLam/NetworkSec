@@ -4,7 +4,9 @@
 
 Tài liệu này hướng dẫn operator triển khai thủ công và nghiệm thu Syslog lab. Luồng OSPF
 đã được kiểm thử phần mềm với bản ghi spool mô phỏng. Ubuntu Compose và tích hợp live
-GNS3 R1–R2 vẫn cần nghiệm thu tại môi trường đích.
+GNS3 R1–R2 vẫn cần nghiệm thu tại môi trường đích. Sau nâng cấp, người dùng dashboard Jinja
+ở chế độ vận hành cần đăng nhập lại để nhận session có thể thu hồi trong PostgreSQL.
+[Checklist Ubuntu và GNS3](ubuntu-deployment-checklist.md)
 
 ## Triển khai OSPF trên Ubuntu
 
@@ -242,9 +244,59 @@ docker compose --profile notifications up --build bot
 
 Grafana datasource/dashboard là read-only provisioning tại `infra/grafana/`; thay đổi file rồi restart/recreate container nhưng giữ `grafana-data`. Custom Dashboard dùng `DASHBOARD_BACKEND=operational` trong Compose. Để chẩn đoán local không có storage, đặt `legacy` rõ ràng; không dùng legacy làm fallback production im lặng.
 
+Compose cấp 512 MiB RAM cho Grafana và dùng plugin Loki có sẵn trong image. Kiểm tra Grafana từ host tại `http://127.0.0.1:3000/api/health`. Nếu healthcheck báo lỗi, xem log khởi động bằng `docker compose logs --tail 100 grafana`.
+
 Grafana, PostgreSQL, Loki và Dashboard đều bind loopback mặc định. Nếu truy cập từ máy Windows host tới Ubuntu VM, dùng SSH tunnel hoặc reverse proxy TLS đã review; không đổi bind thành public chỉ để tiện demo.
 
 Bot PostgreSQL chạy các migration hiện có, gồm delivery outbox OSPF trong `005`, trước loop.
+
+## Backend operational API
+
+Dashboard và processor áp dụng lần lượt migration PostgreSQL khi khởi động. Các migration mới
+bổ sung registry, event catalog, session, audit, rule quản lý và view KPI. Trước khi nâng cấp,
+backup PostgreSQL cùng các volume log/checkpoint theo quy trình lưu trữ hiện có. Hai dịch vụ
+dùng cùng bộ migration đã version hóa. Giữ nguyên volume nếu cần rollback phiên bản ứng dụng
+và đánh giá tương thích schema trên môi trường cô lập trước khi rollback.
+
+1. Điền giá trị thích hợp trong môi trường triển khai. Dùng `.env.example` để tra tên biến.
+   `SESSION_SECRET` cần duy nhất, dài ít nhất 32 ký tự cho Compose production.
+   `FRONTEND_ORIGINS` là danh sách origin phân cách bằng dấu phẩy và `TRUSTED_HOSTS` giữ
+   `127.0.0.1` để healthcheck hoạt động. Khi dùng HTTPS, bật `SESSION_HTTPS_ONLY=true`.
+2. Xác thực cấu hình bằng `docker compose config --quiet`. Trên môi trường đã được duyệt,
+   chạy `docker compose up -d --build postgres loki rsyslog processor dashboard grafana`.
+   Xem `docker compose ps`, `curl -fsS http://127.0.0.1:8000/health` và
+   `docker compose exec -T processor python -m app.processor.healthcheck`.
+3. Đăng nhập frontend qua tài khoản bootstrap rồi tạo tài khoản Admin, Analyst hoặc Viewer
+   theo [API contract](api-contract.md#sessions-and-users). Mặc định bearer session hết hạn
+   sau 3.600 giây. Chỉ khai báo thiết bị và source address đã được xác minh ở collector.
+4. Ghi inventory vật lý/segment tại `config/topology.yaml`. Mỗi node gồm tên và loại, mỗi
+   link gồm ID ổn định, tên hai node, `link_type` và interface nếu đã biết. Hai node của
+   link phải được khai báo trong inventory. Cặp OSPF dùng `ospf.links` trong
+   `config/correlation_rules.yaml`. Bổ sung scope/area, Router ID, tên reporter và
+   interface dựa trên kết quả xác nhận của operator. Đặt `source_addresses` tại từng endpoint
+   để mapping kiểm tra địa chỉ peer của collector đối với các nguồn đã xác minh.
+   Dashboard và processor phải đọc cùng cấu hình correlation. Với cấu hình được đóng gói trong
+   image, cập nhật bằng `docker compose up -d --build processor dashboard` trong deployment
+   đã được duyệt. [Checklist live](evidence/gns3-validation/README.md).
+5. Đặt `GRAFANA_PUBLIC_URL` theo đường dẫn mà trình duyệt truy cập được. Nếu dùng reverse
+   proxy subpath, bao gồm subpath trong base URL. Mặc định UID là `network-event-kpis`.
+   `GRAFANA_VARIABLE_MAPPING` ánh xạ tên filter API sang biến dashboard, gồm
+   `device`, `device_id`, `severity`, `category`, `incident` với dashboard KPI.
+   [Cài đặt datasource và phân quyền Grafana](grafana-integration.md).
+
+Các rule quản lý nhận event từ parser đã xác minh. Mặc định rule login failure, firewall deny,
+configuration change và port flap dựa trên ngưỡng sự kiện trong cửa sổ UTC. Mỗi lần đổi
+definition tạo revision mới cho các sự kiện tiếp theo. Kiểm tra rule bằng fixtures qua API
+test trước khi bật và theo dõi audit. Cấu hình built-in interface và OSPF nằm trong YAML.
+Interface Up mới hơn có thể đóng sự cố Down của cùng interface và nguồn thiết bị. Bản ghi Up
+trùng thời điểm hoặc từ nguồn khác không đóng sự cố. Sự cố đã resolve thủ công giữ nguyên.
+Trạng thái `stale` hiện là tín hiệu telemetry theo interval của thiết bị. Rule báo sự cố do
+thiếu log cần xác nhận collector đang khỏe và thiết bị từng được quan sát. Sự kiện khởi động
+lại và các loại lỗi chưa có fixture/parser cần nguồn dữ liệu xác nhận trước khi thêm rule.
+[Hợp đồng rule API](api-contract.md#correlation-rules).
+
+Catalog bắt đầu ghi khi processor mới chạy. Loki vẫn phục vụ các log lịch sử còn trong
+retention. Xem `coverage_start` khi đối chiếu số liệu sau nâng cấp. [KPI](kpi-contract.md).
 Backup PostgreSQL trước migration và giữ delivery state khi nâng cấp.
 
 ## GNS3 Syslog Phase 7 (lịch sử)

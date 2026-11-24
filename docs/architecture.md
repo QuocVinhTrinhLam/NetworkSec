@@ -210,3 +210,26 @@ Các mục Phase 1–8 bên dưới ghi các mốc gốc của dự án trước
   transaction giữa Loki và PostgreSQL.
 - Chỉ chạy một processor active cho một spool. `processor-state`, `syslog-raw`, PostgreSQL và Loki đều
   phải nằm trong kế hoạch backup; không xóa volume để xử lý lỗi.
+
+## Backend vận hành và frontend riêng
+
+- FastAPI phục vụ API vận hành và dashboard Jinja ngay trong cùng tiến trình. Bearer session và
+  session cookie vận hành có digest riêng trong PostgreSQL. Dashboard Jinja giữ kiểm tra CSRF
+  cho mutation. Role được kiểm tra tại API trước khi trả dữ liệu hoặc sửa trạng thái.
+- Processor ghi Loki và lưu xác nhận vào state SQLite trước khi ghi journal correlation.
+  PostgreSQL cập nhật incident projection, catalog, registry, observation và rule quản lý trong
+  cùng transaction. Catalog dùng `event_id` làm khóa duy nhất. Offset được checkpoint sau khi lưu
+  thành công. Replay giữ nguyên lần ghi catalog đầu tiên và quan hệ với registry.
+- Device registry khớp từ địa chỉ peer của rsyslog đã được đăng ký, kết hợp vendor khi khai báo.
+  Tên thiết bị và IP đọc được trong payload dùng cho phân tích. Event chưa xác nhận có
+  `device_id=null`. `last_seen` chỉ cập nhật từ bản ghi gắn với thiết bị.
+- Dữ liệu gốc tiếp tục nằm trong spool kiểm soát truy cập và payload chuẩn hóa nằm trong Loki.
+  PostgreSQL giữ catalog cho truy vấn, thống kê, registry, rule, session và audit. Các phiên bản
+  `NormalizedEvent` 1.0 và 1.1 vẫn đọc được qua API cũ. Catalog phản ánh dữ liệu được processor
+  mới ghi và khai báo phạm vi bằng `coverage_start`.
+- Topology kết hợp inventory do operator xác nhận với observation của OSPF. Mỗi mapping dùng
+  scope, area, cặp Router ID và định danh link. Neighbor thiếu mapping giữ trạng thái chưa xác
+  định. Cấu hình ban đầu không khai báo endpoint khi chưa có bằng chứng live.
+- Grafana dùng PostgreSQL views chỉ đọc cho KPI và dùng Loki cho truy vấn log kỹ thuật. Dashboard
+  summary và báo cáo API dùng chung định nghĩa KPI. Audit hành động bảo mật nằm riêng với event
+  logs. [API](api-contract.md), [KPI](kpi-contract.md) và [Grafana](grafana-integration.md).

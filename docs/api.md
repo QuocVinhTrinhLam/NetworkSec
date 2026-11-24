@@ -1,10 +1,13 @@
-# Backend API v1
+# Legacy event and incident API v1
 
 Base path: `/api/v1`. Contract version in paginated responses: `1.0`.
 
 ## Authentication and errors
 
-API dùng cùng session cookie với Custom Dashboard. Request chưa đăng nhập nhận `401` và `WWW-Authenticate: Session`. Các mutation còn yêu cầu header `X-CSRF-Token` lấy từ session/dashboard; thiếu hoặc sai token nhận `403`.
+Dashboard Jinja dùng session cookie. Các mutation qua cookie yêu cầu `X-CSRF-Token`
+lấy từ session/dashboard. Frontend riêng dùng bearer token và API kiểm tra quyền theo vai trò.
+Request chưa đăng nhập nhận `401`. Thiếu quyền hoặc sai CSRF nhận `403`.
+Xem [API vận hành đầy đủ](api-contract.md) và [hướng dẫn frontend](frontend-integration.md).
 
 Validation path/query/body do FastAPI/Pydantic thực hiện và trả `422`. Các lỗi backend được chuẩn hóa:
 
@@ -25,7 +28,7 @@ Không trả DSN, SQL, response body nội bộ của Loki hoặc credential tro
 `start` và `end` là ISO 8601 có timezone. Mặc định là 24 giờ gần nhất. `start` phải nhỏ hơn `end`; mọi giá trị được chuẩn hóa UTC.
 
 - Event dùng `page_size` 1–500 và opaque `cursor`. Client không phân tích hoặc tự tạo cursor.
-- Alert dùng `page` từ 1 và `page_size` 1–200; response có `total`.
+- Alert dùng `page` 1–1.000 và `page_size` 1–200. Response có `total`.
 - Loki đọc khoảng `[start, end)` với `direction=backward`. API sắp xếp giảm dần theo
   timestamp nanosecond và `event_id` trong từng nhóm cùng timestamp. Cursor mới giữ
   vị trí theo hai giá trị này. Cursor cũ có danh sách ID tại biên vẫn đọc được.
@@ -39,6 +42,10 @@ Không trả DSN, SQL, response body nội bộ của Loki hoặc credential tro
 Query normalized events từ Loki.
 
 Filters: `start`, `end`, `severity`, `event_type`, `vendor`, `device_name`, `interface_name`, `page_size`, `cursor`, `include_ospf`.
+
+Danh sách trả `raw_message="[restricted]"` và giữ nguyên `event_id`. Admin có thể yêu cầu bằng
+chứng đã che thông tin nhạy cảm bằng `include_raw=true` trên endpoint chi tiết.
+[Hợp đồng API vận hành](api-contract.md)
 
 `severity`, `event_type`, `vendor` là Loki labels cardinality thấp. `device_name` và `interface_name` lọc sau `| json`, không tạo label cardinality cao. Response:
 
@@ -59,6 +66,10 @@ timestamp trong các giới hạn này, API trả HTTP 502 để client nhận b
 thể hoàn tất.
 
 Request mặc định chỉ đọc stream `schema_version="1.0"` trước khi phân trang. Client muốn đọc OSPF gửi `include_ospf=true`. Các item khi đó có thể là event `1.0` hoặc `1.1` và client kiểm tra `items[].schema_version`. Page envelope vẫn là `1.0`. Ví dụ `GET /api/v1/events?include_ospf=true&event_type=routing_neighbor_up`. Khi dùng cursor, giữ nguyên các filter, gồm `include_ospf`. Xem [schema OSPF và quy trình nâng phiên bản](parsing.md#ospfv2-phase-1).
+
+Phần này mô tả chế độ `view=legacy`. Client mới dùng `/api/v1/events/catalog` cho phân trang theo
+số và bộ lọc registry. Truy cập raw log qua bearer yêu cầu role Admin và
+`include_raw=true` ở endpoint chi tiết. [API vận hành](api-contract.md#events-incidents-and-topology).
 
 ### `GET /api/v1/alerts`
 
@@ -101,8 +112,8 @@ tồn tại vẫn trả HTTP 404.
 ```
 
 Cho phép `new`, `acknowledged`, `resolved`. Status `acknowledged` áp dụng cùng điều kiện
-và kết quả như endpoint ACK. Status `resolved` đóng alert, còn status `new` cho phép
-operator chủ ý mở lại alert. Gửi lại cùng trạng thái không thêm dòng chuyển trạng thái.
+và kết quả như endpoint ACK. Status `resolved` đóng alert. Mở lại alert bằng `new` yêu cầu
+role Admin. Gửi lại cùng trạng thái giữ nguyên lịch sử chuyển trạng thái.
 
 ### `GET /api/v1/storage/health`
 
@@ -110,4 +121,5 @@ Kiểm tra readiness Loki và PostgreSQL, trả `ok` khi cả hai sẵn sàng, n
 
 ## OpenAPI
 
-FastAPI sinh OpenAPI tại `/openapi.json`. Swagger/ReDoc mặc định của framework có thể dùng trong môi trường phát triển đã đăng nhập, nhưng không nên expose public nếu chưa có reverse proxy, TLS và access policy.
+FastAPI sinh OpenAPI tại `/openapi.json` trong môi trường phát triển. Cấu hình production
+tắt OpenAPI và giao diện tài liệu tương tác.

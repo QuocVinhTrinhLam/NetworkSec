@@ -37,18 +37,20 @@ write không được parse hoặc checkpoint. Envelope tối đa 128 KiB để 
 
 ## Checkpoint và idempotency
 
-`processor-state.db` lưu identity file `(device, inode)` và byte offset. Với parsed event, thứ tự commit là:
+`processor-state.db` lưu identity file `(device, inode)` và byte offset. Parsed event đi qua các bước dưới đây.
 
-1. correlation SQLite ghi membership link-state hoặc journal OSPF theo `event_id`;
-2. Loki nhận normalized event;
-3. PostgreSQL upsert aggregate link-state và `alert_event_refs`, hoặc áp dụng một revision OSPF gồm incident, evidence và lifecycle;
-4. processor ghi receipt `event_id` cùng inode/byte range rồi advance checkpoint trong một transaction.
+1. Loki nhận normalized event. Processor lưu xác nhận ghi Loki cho event đang xử lý.
+2. Correlation SQLite ghi membership link-state hoặc journal OSPF theo `event_id`.
+3. PostgreSQL cập nhật projection link-state hoặc OSPF trong cùng transaction với catalog.
+4. Processor ghi receipt `event_id` cùng inode/byte range và cập nhật checkpoint trong một transaction.
 
-Nếu lỗi ở bước 1–3, checkpoint giữ nguyên. Retry có thể tạo physical delivery lặp ở Loki, nhưng
+Các lỗi cần retry ở bước 1–3 giữ nguyên checkpoint. Retry có thể tạo physical delivery lặp ở Loki, nhưng
 `event_id` làm correlation và PostgreSQL idempotent; Loki query adapter cũng loại trùng theo `event_id`.
 Đây là at-least-once delivery với exactly-once logic, không phải distributed transaction.
 
-Restart đọc lại offset từ volume `processor-state`. Crash sau bước 3 nhưng trước bước 4 sẽ replay an toàn. OSPF dùng cùng `event_id` khi retry ghi Loki và conditional upsert chặn PostgreSQL áp dụng cùng revision lần nữa. Khi lỗi PostgreSQL xảy ra sau khi Loki đã ghi, receipt và offset vẫn chưa tiến.
+Restart đọc lại offset từ volume `processor-state`. Nếu đã lưu xác nhận Loki, lần retry tiếp tục
+từ correlation với cùng `event_id`. Conditional upsert chặn PostgreSQL áp dụng cùng revision OSPF
+lần nữa. Khi lỗi PostgreSQL xảy ra sau khi Loki đã ghi, receipt hoàn tất và offset vẫn chưa tiến.
 
 Lần đầu spool rảnh sau khi khởi động, worker đối soát các adjacency đã journal trong Phase 2. Chỉ snapshot có đủ receipt cho evidence mới được áp dụng. Đường xử lý trực tiếp cũng yêu cầu receipt cho bằng chứng cũ, với event hiện tại được ghi Loki trước PostgreSQL. Nếu thiếu receipt, xử lý báo blocked để tránh publish evidence chưa đi qua pipeline. Giữ `processor-state.db` và `correlation.db` nhất quán khi restore.
 
@@ -65,8 +67,10 @@ ghi cùng transaction SQLite:
 - checkpoint kế tiếp.
 
 Vì vậy poison record không chặn pipeline và vẫn truy ngược được tới `raw.log`. Với record hỏng lớn hơn
-128 KiB, DLQ chỉ giữ prefix bị giới hạn cùng byte range; spool gốc vẫn là nguồn sự thật. Storage/correlation
-failure không vào DLQ và không advance checkpoint.
+128 KiB, DLQ chỉ giữ prefix bị giới hạn cùng byte range; spool gốc vẫn là nguồn sự thật.
+Sự kiện bị Loki từ chối với `too_far_behind` đi vào DLQ với reason
+`loki_entry_too_far_behind` trước bước correlation. Các lỗi lưu trữ còn lại và lỗi correlation giữ
+checkpoint để retry.
 
 DLQ có thể chứa dữ liệu nhạy cảm từ thiết bị. Không in nội dung qua log, không commit database, chỉ cho
 service account/nhóm vận hành đọc volume. Chưa có auto-delete hoặc auto-replay DLQ; remediation phải review

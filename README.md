@@ -125,13 +125,20 @@ python -m pytest -m "not e2e and not syslog_integration and not storage_integrat
 [Testing runbook](docs/testing.md#kiểm-thử-ospf) có lệnh chạy PostgreSQL/Loki cô lập và
 phân biệt kiểm thử phần mềm, kiểm thử TCP/UDP qua Docker, snapshot GNS3 và kiểm thử thiết bị live.
 
+Dashboard frontend riêng dùng REST API qua `/api/v1`. Chạy dashboard với PostgreSQL và Loki,
+cấu hình origin của frontend trong `FRONTEND_ORIGINS` rồi đăng nhập qua
+`POST /api/v1/auth/login`. Dùng API catalog cho sự kiện mới và API cursor khi cần truy vấn các log
+đã có trong Loki trước khi nâng cấp. [Hướng dẫn tích hợp frontend](docs/frontend-integration.md).
+
 ## Tài liệu
 
 - [Kiến trúc](docs/architecture.md) và [triển khai](docs/deployment.md)
 - [Processing Worker](docs/processor.md) và [Syslog collection](docs/syslog_collection.md)
 - [Parsing](docs/parsing.md) và [correlation](docs/correlation.md)
-- [API](docs/api.md) và [storage](docs/storage.md)
+- [API vận hành](docs/api-contract.md), [API cursor hiện có](docs/api.md) và [storage](docs/storage.md)
+- [KPI](docs/kpi-contract.md), [Grafana](docs/grafana-integration.md) và [RBAC](docs/backend-security-review.md)
 - [Kiểm thử](docs/testing.md) và [benchmark](docs/performance.md)
+- [Nghiệm thu backend độc lập](docs/independent-backend-audit.md), [OpenAPI](docs/openapi.json) và [checklist Ubuntu/GNS3](docs/ubuntu-deployment-checklist.md)
 - [GNS3 integration](gns3/docs/phase7-syslog-integration.md) và [demo](docs/demo-phase8.md)
 
 ## An toàn

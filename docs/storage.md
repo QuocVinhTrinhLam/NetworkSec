@@ -81,7 +81,7 @@ Test PostgreSQL độc lập nằm ở `tests/integration/test_postgres_ospf_lif
 
 ## Resource budget
 
-Compose giới hạn PostgreSQL 384 MiB, Loki 384 MiB và processor 256 MiB/0,75 CPU. Cộng dashboard,
-Grafana, bot/generator tùy chọn và rsyslog, tổng hard memory limit của core stack vẫn phù hợp VM 5,3 GiB,
+Compose giới hạn PostgreSQL 384 MiB, Loki 384 MiB, processor 256 MiB/0,75 CPU và Grafana 512 MiB. Cộng dashboard,
+bot/generator tùy chọn và rsyslog, tổng hard memory limit của core stack vẫn phù hợp VM 5,3 GiB,
 nhưng phải theo dõi RSS, disk growth, backlog và query latency. SQLite `synchronous=FULL` theo từng event
 có thể là bottleneck trước CPU/RAM; chỉ tối ưu batch sau benchmark Ubuntu có bằng chứng.

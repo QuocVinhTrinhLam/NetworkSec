@@ -65,6 +65,35 @@ Biên cuối không thuộc cửa sổ. Ví dụ với 60 giây: `12:00:59.999` 
 
 Raw spool của rsyslog vẫn là bằng chứng gốc dài hạn. Bản raw trong SQLite là tham chiếu điều tra gắn với aggregate, không thay thế retention/rotation của spool.
 
+## Vòng đời interface và rule PostgreSQL
+
+Với rule YAML `interface-link-state`, PostgreSQL giữ nguyên ID, cửa sổ và membership do
+SQLite tạo. Một `link_up` chỉ xác nhận recovery khi timestamp lớn hơn lần `link_down`
+cuối của cửa sổ, trên cùng interface và cùng thiết bị đã đăng ký. Với thiết bị chưa
+đăng ký, khóa dự phòng gồm IP nguồn tại collector, vendor và hostname được báo cáo.
+Khi một cửa sổ chứa quan sát Down từ các nguồn khác nhau, hệ thống giữ cảnh báo để
+analyst quyết định. Các aggregate lịch sử thiếu quan sát catalog giữ nguyên trạng thái.
+
+Một Up hợp lệ có thể khôi phục cửa sổ Down trước đó. API evidence và KPI view giữ
+event ID của lần Up liên quan. Cửa sổ mới chỉ chứa Up vẫn lưu aggregate và membership
+gốc, còn danh sách incident, notification và KPI bỏ qua cửa sổ đó. Một Down đến muộn
+có thể làm mất hiệu lực recovery và khôi phục trạng thái vận hành trước đó, kể cả ACK.
+Quyết định đóng thủ công vẫn được giữ. Audit history ghi nguồn `interface_recovery`
+hoặc `interface_reassessment` cho thay đổi tự động.
+
+Rule quản lý qua API dùng cửa sổ UTC cố định riêng theo phiên bản, thứ tự priority
+và khóa được allowlist. Threshold đếm các failure khác biệt theo chính sách dedup.
+Recovery của rule quản lý áp dụng trong cửa sổ của rule và giữ dấu vết
+`rule_recovery` hoặc `rule_reassessment`. Các event gốc luôn có một catalog ID.
+Rule mẫu `repeated-port-flap` ở trạng thái tắt. Cần parser hoặc data source đã
+xác minh cho `port_flap` trước khi có thể kích hoạt.
+
+Registry chỉ tính trạng thái stale sau khi quản trị viên cấu hình khoảng log mong đợi
+và collector đã nhận ít nhất một event hợp lệ cho thiết bị. Trạng thái này biểu thị
+thiếu log theo chính sách. Tạo incident vì mất log cần thêm tín hiệu sức khỏe collector
+để phân biệt lỗi thu thập với sự vắng mặt của nguồn. Restart và lỗi mạng chung vẫn cần
+fixture và định dạng được xác minh trước khi có rule.
+
 ## Notification cooldown
 
 `claim_notification(aggregate_id, now)` thực hiện read/check/update trong một write transaction. Claim đầu tiên được phép; các claim trước `last_notification_at + cooldown` bị từ chối. State này nằm trong SQLite nên vẫn có hiệu lực sau restart và ngăn nhiều worker tạo quyết định Telegram trùng.
