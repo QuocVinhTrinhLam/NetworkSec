@@ -5,9 +5,13 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from urllib.parse import urlsplit
+from uuid import uuid4
 
 from fastapi import FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -16,12 +20,19 @@ from starlette.middleware.sessions import SessionMiddleware
 from app.config import BASE_DIR, Settings, get_settings
 from app.db import Database
 from app.logging_config import configure_logging
+from app.services.backend import request_id
+from app.services.correlation import load_correlation_config
 from app.services.storage import StorageWriter
-from app.storage.base import AlertStateStorage, LogStorage
+from app.services.topology import load_topology
+from app.storage.backend import DuplicateResource, PostgresBackendStorage
+from app.storage.base import AlertStateStorage, LogStorage, StorageError, StorageUnavailableError
 from app.storage.loki import LokiLogStorage
-from app.storage.postgres import PostgresAlertStorage
+from app.storage.managed_rules import RuleConflict
 from app.storage.unavailable import UnavailableAlertStorage
+from app.web.accounts import ApiAccounts, LoginThrottle
 from app.web.api import create_api_router
+from app.web.backend import create_backend_router
+from app.web.body_limit import BodyLimitMiddleware
 from app.web.routes import create_router
 
 LOGGER = logging.getLogger(__name__)
@@ -48,30 +59,63 @@ def create_app(
         raise RuntimeError(
             "Production or a public bind requires a unique SESSION_SECRET of at least 32 characters"
         )
+    production = current.app_env.lower() == "production" or public_bind
+    if production and (not current.trusted_hosts or "*" in current.trusted_hosts):
+        raise RuntimeError("Production or a public bind requires trusted hosts")
+    if (public_bind or (production and current.app_url.startswith("https://"))) and (
+        not current.session_https_only
+    ):
+        raise RuntimeError("Public binds and HTTPS require secure cookies")
+    if not 300 <= current.api_session_seconds <= 28800:
+        raise RuntimeError("API_SESSION_SECONDS must be between 300 and 28800")
+    for origin in current.frontend_origins:
+        url = urlsplit(origin)
+        if (
+            url.scheme not in ("https", "http")
+            or not url.hostname
+            or url.username is not None
+            or url.path
+            or url.query
+            or url.fragment
+            or "*" in origin
+            or (
+                production
+                and url.scheme != "https"
+                and url.hostname not in {"localhost", "127.0.0.1", "::1"}
+            )
+        ):
+            raise RuntimeError("FRONTEND_ORIGINS must contain explicit origins")
     database = Database(current.database_path)
     database.initialize()
     logs = log_storage or LokiLogStorage(
         current.loki_url,
         timeout_seconds=current.loki_timeout_seconds,
     )
-    alert_states = alert_storage or (
-        PostgresAlertStorage(
+    backend = (
+        PostgresBackendStorage(
             current.postgres_dsn,
             current.postgres_migrations_path,
             connect_timeout=current.postgres_connect_timeout_seconds,
         )
         if current.postgres_dsn
-        else UnavailableAlertStorage()
+        else None
     )
+    alert_states = alert_storage or backend or UnavailableAlertStorage()
     configure_logging(current.log_level, json_logs=current.json_logs)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         alert_states.migrate()
+        if backend is not None and alert_states is not backend:
+            backend.migrate()
         database.set_state("event_source_health", "connected")
         yield
 
-    app = FastAPI(title=current.app_name, lifespan=lifespan)
+    app = FastAPI(
+        title=current.app_name,
+        lifespan=lifespan,
+        openapi_url=None if production else "/openapi.json",
+    )
     app.add_middleware(
         SessionMiddleware,
         secret_key=current.session_secret,
@@ -79,15 +123,44 @@ def create_app(
         same_site="lax",
         max_age=8 * 60 * 60,
     )
+    app.add_middleware(BodyLimitMiddleware)
+    if production:
+        app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(current.trusted_hosts))
+    if current.frontend_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=list(current.frontend_origins),
+            allow_methods=["GET", "POST", "PATCH", "DELETE"],
+            allow_headers=["Authorization", "Content-Type"],
+            expose_headers=[
+                "X-Request-ID",
+                "Retry-After",
+                "Content-Disposition",
+                "X-Report-Truncated",
+            ],
+        )
+
+    @app.exception_handler(StorageError)
+    async def storage_error(_request: Request, exc: StorageError) -> JSONResponse:
+        if isinstance(exc, (DuplicateResource, RuleConflict)):
+            return JSONResponse(status_code=409, content={"detail": str(exc)})
+        if isinstance(exc, StorageUnavailableError):
+            return JSONResponse(status_code=503, content={"detail": "Storage is unavailable"})
+        return JSONResponse(status_code=502, content={"detail": "Storage operation failed"})
 
     @app.exception_handler(RequestValidationError)
     async def request_validation_error(
-        _request: Request, exc: RequestValidationError
+        request: Request, exc: RequestValidationError
     ) -> JSONResponse:
         # Validation input and context can contain credentials, including in nested bodies.
         detail = [
             {
-                "loc": error["loc"],
+                "loc": (
+                    (*error["loc"][:-1], "unknown_field")
+                    if error["type"] == "extra_forbidden"
+                    and request.url.path.startswith(("/api/v1/auth/", "/api/v1/users"))
+                    else error["loc"]
+                ),
                 "type": error["type"],
                 "msg": (
                     "Invalid value"
@@ -101,10 +174,20 @@ def create_app(
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next: Callable) -> Response:
-        response = await call_next(request)
+        identifier = uuid4()
+        reset = request_id.set(identifier)
+        try:
+            response = await call_next(request)
+        finally:
+            request_id.reset(reset)
+        response.headers["X-Request-ID"] = str(identifier)
+        if request.url.path.startswith("/api/"):
+            response.headers["Cache-Control"] = "no-store"
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "same-origin"
+        if current.session_https_only:
+            response.headers["Strict-Transport-Security"] = "max-age=31536000"
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; script-src 'self'; style-src 'self'; "
             "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'"
@@ -115,11 +198,22 @@ def create_app(
     app.mount("/static", StaticFiles(directory=BASE_DIR / "app" / "static"), name="static")
     app.include_router(create_router(database, current, templates, logs, alert_states))
     app.include_router(create_api_router(logs, alert_states))
+    app.include_router(
+        create_backend_router(
+            logs,
+            current,
+            load_correlation_config(current.correlation_rules_path),
+            load_topology(current.topology_config_path),
+        )
+    )
     app.state.database = database
     app.state.log_storage = logs
     app.state.alert_storage = alert_states
     app.state.storage_writer = StorageWriter(logs, alert_states)
     app.state.settings = current
+    app.state.backend = backend
+    app.state.accounts = ApiAccounts(backend, current) if backend is not None else None
+    app.state.login_throttle = LoginThrottle()
     return app
 
 

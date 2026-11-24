@@ -20,7 +20,9 @@ from app.config import Settings
 from app.db import Database
 from app.models import AttackScenario
 from app.schemas.api import AlertLifecycleStatus, AlertRecord
+from app.schemas.backend import Login
 from app.schemas.event import EventSeverity, EventType, EventVendor
+from app.services.backend import redact
 from app.services.catalog import RulesCatalog
 from app.storage.base import (
     AlertListMetadata,
@@ -32,7 +34,14 @@ from app.storage.base import (
     LogStorage,
     StorageError,
 )
-from app.web.auth import csrf_token, require_user, validate_csrf, verify_password
+from app.web.accounts import (
+    DUMMY_HASH,
+    ApiAccounts,
+    consume_login_attempt,
+    logout_cookie,
+    require_user,
+)
+from app.web.auth import csrf_token, validate_csrf, verify_password
 
 CSV_ALERT_LIMIT = 5000
 
@@ -193,14 +202,24 @@ def create_router(
     @router.post("/login")
     async def login(
         request: Request,
-        username: Annotated[str, Form(max_length=100)],
-        password: Annotated[str, Form(max_length=1024)],
+        username: Annotated[str, Form(min_length=1, max_length=100)],
+        password: Annotated[str, Form(min_length=1, max_length=1024)],
         csrf: Annotated[str, Form()] = "",
     ) -> Response:
         validate_csrf(request, csrf)
-        if username != settings.admin_username or not verify_password(
-            password, settings.admin_password_hash
-        ):
+        consume_login_attempt(request)
+        accounts: ApiAccounts | None = request.app.state.accounts
+        session = None
+        if accounts is not None:
+            session = await run_in_threadpool(
+                accounts.login, Login(username=username, password=password), cookie=True
+            )
+            authenticated = session is not None
+        else:
+            encoded = settings.admin_password_hash if username == settings.admin_username else ""
+            valid = await run_in_threadpool(verify_password, password, encoded or DUMMY_HASH)
+            authenticated = bool(encoded) and valid
+        if not authenticated:
             return templates.TemplateResponse(
                 request,
                 "login.html",
@@ -209,6 +228,8 @@ def create_router(
             )
         request.session.clear()
         request.session["user"] = username
+        if session is not None:
+            request.session["legacy_session"] = session.access_token
         csrf_token(request)
         return RedirectResponse("/dashboard", status_code=status.HTTP_303_SEE_OTHER)
 
@@ -219,7 +240,7 @@ def create_router(
         csrf: Annotated[str, Form()] = "",
     ) -> Response:
         validate_csrf(request, csrf)
-        request.session.clear()
+        await run_in_threadpool(logout_cookie, request, _user)
         return RedirectResponse("/login", status_code=status.HTTP_303_SEE_OTHER)
 
     @router.get("/")
@@ -525,7 +546,13 @@ def create_router(
             "events.html",
             context(
                 request,
-                events=[item.model_dump(mode="json") for item in result.items],
+                events=[
+                    {
+                        **item.model_dump(mode="json", exclude={"raw_message"}),
+                        "raw_message": redact(item.raw_message) if event_id is not None else None,
+                    }
+                    for item in result.items
+                ],
                 next_cursor=result.next_cursor if event_id is None else None,
                 evidence_event_id=event_id,
                 filters={

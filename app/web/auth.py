@@ -6,11 +6,10 @@ import base64
 import hashlib
 import hmac
 import secrets
-from typing import Any
 
 from fastapi import HTTPException, Request, status
 
-PBKDF2_ITERATIONS = 390_000
+PBKDF2_ITERATIONS = 600_000
 
 
 def hash_password(password: str, iterations: int = PBKDF2_ITERATIONS) -> str:
@@ -57,29 +56,6 @@ def validate_csrf(request: Request, supplied: str) -> None:
     ):
         return
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid CSRF token")
-
-
-def require_user(request: Request) -> str:
-    user: Any = request.session.get("user")
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_303_SEE_OTHER,
-            headers={"Location": "/login"},
-            detail="Authentication required",
-        )
-    return str(user)
-
-
-def require_api_user(request: Request) -> str:
-    """Require the existing session but return API-appropriate status semantics."""
-    user: Any = request.session.get("user")
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            headers={"WWW-Authenticate": "Session"},
-            detail="Authentication required",
-        )
-    return str(user)
 
 
 def require_api_csrf(request: Request) -> None:

@@ -101,17 +101,20 @@ class AlertEvidenceResponse(BaseModel):
     ospf: OspfEvidenceSummary | None
 
 
+AlertNote = Annotated[StrictStr, Field(min_length=1, max_length=1000, pattern=r"^[^\x00]+$")]
+
+
 class AlertAcknowledgementRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    note: Annotated[StrictStr, Field(min_length=1, max_length=1000)] | None = None
+    note: AlertNote | None = None
 
 
 class AlertStatusUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     status: AlertLifecycleStatus
-    note: Annotated[StrictStr, Field(min_length=1, max_length=1000)] | None = None
+    note: AlertNote | None = None
 
 
 class StorageHealthResponse(BaseModel):
@@ -119,3 +122,17 @@ class StorageHealthResponse(BaseModel):
     loki: Literal["ready", "unavailable"]
     postgres: Literal["ready", "unavailable"]
     checked_at: AwareDatetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class ErrorResponse(BaseModel):
+    detail: str
+
+
+class ValidationIssue(BaseModel):
+    loc: list[str | int]
+    type: str
+    msg: str
+
+
+class ValidationErrorResponse(BaseModel):
+    detail: str | list[ValidationIssue]

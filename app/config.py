@@ -141,6 +141,38 @@ class Settings:
     admin_password_hash: str = field(default_factory=lambda: os.getenv("ADMIN_PASSWORD_HASH", ""))
     session_secret: str = field(default_factory=lambda: os.getenv("SESSION_SECRET", ""))
     session_https_only: bool = field(default_factory=lambda: _bool("SESSION_HTTPS_ONLY", False))
+    frontend_origins: tuple[str, ...] = field(
+        default_factory=lambda: tuple(
+            origin.strip()
+            for origin in os.getenv("FRONTEND_ORIGINS", "").split(",")
+            if origin.strip()
+        )
+    )
+    trusted_hosts: tuple[str, ...] = field(
+        default_factory=lambda: tuple(
+            host.strip()
+            for host in os.getenv("TRUSTED_HOSTS", "localhost,127.0.0.1,[::1]").split(",")
+            if host.strip()
+        )
+    )
+    api_session_seconds: int = field(
+        default_factory=lambda: int(os.getenv("API_SESSION_SECONDS", "3600"))
+    )
+    topology_config_path: Path | None = field(
+        default_factory=lambda: (
+            Path(value) if (value := os.getenv("TOPOLOGY_CONFIG_PATH")) else None
+        )
+    )
+    grafana_public_url: str = field(default_factory=lambda: os.getenv("GRAFANA_PUBLIC_URL", ""))
+    grafana_dashboard_uid: str = field(
+        default_factory=lambda: os.getenv("GRAFANA_DASHBOARD_UID", "network-event-kpis")
+    )
+    grafana_variable_mapping: str = field(
+        default_factory=lambda: os.getenv(
+            "GRAFANA_VARIABLE_MAPPING",
+            "device=device,device_id=device_id,severity=severity,category=category,incident=incident",
+        )
+    )
     device_silent_minutes: int = field(
         default_factory=lambda: int(os.getenv("DEVICE_SILENT_MINUTES", "15"))
     )
