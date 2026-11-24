@@ -1,0 +1,434 @@
+{
+  "uid": "network-event-kpis",
+  "title": "Network Event KPIs",
+  "description": "Distinct processed events and current operational state from read-only KPI views.",
+  "editable": false,
+  "schemaVersion": 39,
+  "version": 2,
+  "timezone": "utc",
+  "tags": [
+    "networksec",
+    "kpi"
+  ],
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Total events",
+      "description": "",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "networksec-kpi-postgres"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "networksec-kpi-postgres"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT count(*) AS \"Total events\"\nFROM kpi_event_facts AS event\nWHERE event_timestamp >= to_timestamp(${__from}/1000.0) AND event_timestamp < to_timestamp(${__to}/1000.0)\n  AND (${device_id:sqlstring} = '__networksec_all__' OR device_id::text = ${device_id:sqlstring})\n  AND (${device:sqlstring} = '__networksec_all__' OR device_name = ${device:sqlstring})\n  AND (${severity:sqlstring} = '__networksec_all__' OR severity = ${severity:sqlstring})\n  AND (${category:sqlstring} = '__networksec_all__' OR category = ${category:sqlstring})\n  AND (${incident:sqlstring} = '__networksec_all__' OR EXISTS (\n      SELECT 1 FROM kpi_incident_events AS link\n      WHERE link.event_id = event.event_id AND link.incident_id = ${incident:sqlstring}\n  ))"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Critical and high events",
+      "description": "",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "networksec-kpi-postgres"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "networksec-kpi-postgres"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT count(*) FILTER (WHERE severity = 'critical') AS critical,\n       count(*) FILTER (WHERE severity = 'high') AS high\nFROM kpi_event_facts AS event\nWHERE event_timestamp >= to_timestamp(${__from}/1000.0) AND event_timestamp < to_timestamp(${__to}/1000.0)\n  AND (${device_id:sqlstring} = '__networksec_all__' OR device_id::text = ${device_id:sqlstring})\n  AND (${device:sqlstring} = '__networksec_all__' OR device_name = ${device:sqlstring})\n  AND (${severity:sqlstring} = '__networksec_all__' OR severity = ${severity:sqlstring})\n  AND (${category:sqlstring} = '__networksec_all__' OR category = ${category:sqlstring})\n  AND (${incident:sqlstring} = '__networksec_all__' OR EXISTS (\n      SELECT 1 FROM kpi_incident_events AS link\n      WHERE link.event_id = event.event_id AND link.incident_id = ${incident:sqlstring}\n  ))"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Event volume",
+      "description": "",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "networksec-kpi-postgres"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "networksec-kpi-postgres"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "time_series",
+          "rawSql": "SELECT date_trunc(CASE WHEN ${__to} - ${__from} <= 259200000 THEN 'hour' ELSE 'day' END, event_timestamp AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AS time, count(*) AS events\nFROM kpi_event_facts AS event\nWHERE event_timestamp >= to_timestamp(${__from}/1000.0) AND event_timestamp < to_timestamp(${__to}/1000.0)\n  AND (${device_id:sqlstring} = '__networksec_all__' OR device_id::text = ${device_id:sqlstring})\n  AND (${device:sqlstring} = '__networksec_all__' OR device_name = ${device:sqlstring})\n  AND (${severity:sqlstring} = '__networksec_all__' OR severity = ${severity:sqlstring})\n  AND (${category:sqlstring} = '__networksec_all__' OR category = ${category:sqlstring})\n  AND (${incident:sqlstring} = '__networksec_all__' OR EXISTS (\n      SELECT 1 FROM kpi_incident_events AS link\n      WHERE link.event_id = event.event_id AND link.incident_id = ${incident:sqlstring}\n  ))\nGROUP BY 1 ORDER BY 1"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Event ingestion",
+      "description": "",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "networksec-kpi-postgres"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "networksec-kpi-postgres"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "time_series",
+          "rawSql": "SELECT date_trunc(CASE WHEN ${__to} - ${__from} <= 259200000 THEN 'hour' ELSE 'day' END, ingested_at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AS time, count(*) AS events\nFROM kpi_event_facts AS event\nWHERE ingested_at >= to_timestamp(${__from}/1000.0) AND ingested_at < to_timestamp(${__to}/1000.0)\n  AND (${device_id:sqlstring} = '__networksec_all__' OR device_id::text = ${device_id:sqlstring})\n  AND (${device:sqlstring} = '__networksec_all__' OR device_name = ${device:sqlstring})\n  AND (${severity:sqlstring} = '__networksec_all__' OR severity = ${severity:sqlstring})\n  AND (${category:sqlstring} = '__networksec_all__' OR category = ${category:sqlstring})\n  AND (${incident:sqlstring} = '__networksec_all__' OR EXISTS (\n      SELECT 1 FROM kpi_incident_events AS link\n      WHERE link.event_id = event.event_id AND link.incident_id = ${incident:sqlstring}\n  ))\nGROUP BY 1 ORDER BY 1"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "table",
+      "title": "Event severity",
+      "description": "",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "networksec-kpi-postgres"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 14
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "networksec-kpi-postgres"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT severity, count(*) AS events\nFROM kpi_event_facts AS event\nWHERE event_timestamp >= to_timestamp(${__from}/1000.0) AND event_timestamp < to_timestamp(${__to}/1000.0)\n  AND (${device_id:sqlstring} = '__networksec_all__' OR device_id::text = ${device_id:sqlstring})\n  AND (${device:sqlstring} = '__networksec_all__' OR device_name = ${device:sqlstring})\n  AND (${severity:sqlstring} = '__networksec_all__' OR severity = ${severity:sqlstring})\n  AND (${category:sqlstring} = '__networksec_all__' OR category = ${category:sqlstring})\n  AND (${incident:sqlstring} = '__networksec_all__' OR EXISTS (\n      SELECT 1 FROM kpi_incident_events AS link\n      WHERE link.event_id = event.event_id AND link.incident_id = ${incident:sqlstring}\n  ))\nGROUP BY 1 ORDER BY 2 DESC"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "table",
+      "title": "Event categories",
+      "description": "",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "networksec-kpi-postgres"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 14
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "networksec-kpi-postgres"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT category, count(*) AS events\nFROM kpi_event_facts AS event\nWHERE event_timestamp >= to_timestamp(${__from}/1000.0) AND event_timestamp < to_timestamp(${__to}/1000.0)\n  AND (${device_id:sqlstring} = '__networksec_all__' OR device_id::text = ${device_id:sqlstring})\n  AND (${device:sqlstring} = '__networksec_all__' OR device_name = ${device:sqlstring})\n  AND (${severity:sqlstring} = '__networksec_all__' OR severity = ${severity:sqlstring})\n  AND (${category:sqlstring} = '__networksec_all__' OR category = ${category:sqlstring})\n  AND (${incident:sqlstring} = '__networksec_all__' OR EXISTS (\n      SELECT 1 FROM kpi_incident_events AS link\n      WHERE link.event_id = event.event_id AND link.incident_id = ${incident:sqlstring}\n  ))\nGROUP BY 1 ORDER BY 2 DESC"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "Ingestions per second",
+      "description": "",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "networksec-kpi-postgres"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 21
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "networksec-kpi-postgres"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT count(*) * 1000.0 / NULLIF(${__to} - ${__from}, 0) AS events_per_second\nFROM kpi_event_facts AS event\nWHERE ingested_at >= to_timestamp(${__from}/1000.0) AND ingested_at < to_timestamp(${__to}/1000.0)\n  AND (${device_id:sqlstring} = '__networksec_all__' OR device_id::text = ${device_id:sqlstring})\n  AND (${device:sqlstring} = '__networksec_all__' OR device_name = ${device:sqlstring})\n  AND (${severity:sqlstring} = '__networksec_all__' OR severity = ${severity:sqlstring})\n  AND (${category:sqlstring} = '__networksec_all__' OR category = ${category:sqlstring})\n  AND (${incident:sqlstring} = '__networksec_all__' OR EXISTS (\n      SELECT 1 FROM kpi_incident_events AS link\n      WHERE link.event_id = event.event_id AND link.incident_id = ${incident:sqlstring}\n  ))"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "table",
+      "title": "Device status",
+      "description": "Current registry status for the selected device ID and name.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "networksec-kpi-postgres"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 21
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "networksec-kpi-postgres"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT status, count(*) AS devices FROM kpi_device_facts\nWHERE (${device_id:sqlstring} = '__networksec_all__' OR device_id::text = ${device_id:sqlstring})\n  AND (${device:sqlstring} = '__networksec_all__' OR lower(name) = lower(${device:sqlstring}))\nGROUP BY status ORDER BY status"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "table",
+      "title": "Incident totals and resolution",
+      "description": "Current incident state and latest resolutions in the selected window.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "networksec-kpi-postgres"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 28
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "networksec-kpi-postgres"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "WITH selected AS (\n  SELECT *, status = 'resolved' AND status_changed_at >= to_timestamp(${__from}/1000.0)\n    AND status_changed_at < to_timestamp(${__to}/1000.0) AS resolved_in_range\n  FROM kpi_incident_facts AS alert WHERE first_seen < to_timestamp(${__to}/1000.0)\n    AND (${severity:sqlstring} = '__networksec_all__' OR severity = ${severity:sqlstring})\n    AND (${incident:sqlstring} = '__networksec_all__' OR incident_id = ${incident:sqlstring})\n    AND (${category:sqlstring} = '__networksec_all__' OR event_types ?| (\n      CASE ${category:sqlstring}\n        WHEN 'interface' THEN ARRAY['link_up', 'link_down', 'port_flap']\n        WHEN 'routing' THEN ARRAY['routing_neighbor_down', 'routing_neighbor_up', 'routing_neighbor_state_change']\n        WHEN 'authentication' THEN ARRAY['login_failure']\n        WHEN 'firewall' THEN ARRAY['acl_deny']\n        WHEN 'configuration' THEN ARRAY['configuration_change']\n        WHEN 'security' THEN ARRAY['port_security']\n        ELSE ARRAY[]::text[]\n      END\n    ))\n    AND (\n      (${device_id:sqlstring} = '__networksec_all__' AND (\n        ${device:sqlstring} = '__networksec_all__' OR alert.device_name = ${device:sqlstring}\n      ))\n      OR EXISTS (\n        SELECT 1 FROM kpi_incident_events AS link\n        JOIN kpi_event_facts AS event USING (event_id)\n        WHERE link.incident_id = alert.incident_id\n          AND (${device_id:sqlstring} = '__networksec_all__' OR event.device_id::text = ${device_id:sqlstring})\n          AND (${device:sqlstring} = '__networksec_all__' OR event.device_name = ${device:sqlstring})\n      )\n    )\n)\nSELECT count(*) FILTER (WHERE status <> 'resolved') AS active,\n  count(*) FILTER (WHERE resolved_in_range) AS resolved,\n  count(*) FILTER (WHERE severity = 'critical' AND (status <> 'resolved' OR resolved_in_range)) AS critical,\n  count(*) FILTER (WHERE severity = 'high' AND (status <> 'resolved' OR resolved_in_range)) AS high,\n  avg(extract(epoch FROM status_changed_at - first_seen))\n    FILTER (WHERE resolved_in_range AND status_changed_at >= first_seen) AS mean_resolution_seconds\nFROM selected"
+        }
+      ]
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "device",
+        "label": "Device name",
+        "type": "textbox",
+        "current": {
+          "text": "__networksec_all__",
+          "value": "__networksec_all__",
+          "selected": true
+        },
+        "includeAll": false,
+        "multi": false,
+        "options": [
+          {
+            "text": "__networksec_all__",
+            "value": "__networksec_all__",
+            "selected": true
+          }
+        ],
+        "query": "__networksec_all__"
+      },
+      {
+        "name": "device_id",
+        "label": "Device ID",
+        "type": "textbox",
+        "current": {
+          "text": "__networksec_all__",
+          "value": "__networksec_all__",
+          "selected": true
+        },
+        "includeAll": false,
+        "multi": false,
+        "options": [
+          {
+            "text": "__networksec_all__",
+            "value": "__networksec_all__",
+            "selected": true
+          }
+        ],
+        "query": "__networksec_all__"
+      },
+      {
+        "name": "severity",
+        "label": "Severity",
+        "type": "custom",
+        "current": {
+          "text": "All",
+          "value": "__networksec_all__",
+          "selected": true
+        },
+        "includeAll": false,
+        "multi": false,
+        "options": [
+          {
+            "text": "All",
+            "value": "__networksec_all__",
+            "selected": true
+          },
+          {
+            "text": "critical",
+            "value": "critical",
+            "selected": false
+          },
+          {
+            "text": "high",
+            "value": "high",
+            "selected": false
+          },
+          {
+            "text": "medium",
+            "value": "medium",
+            "selected": false
+          },
+          {
+            "text": "low",
+            "value": "low",
+            "selected": false
+          }
+        ],
+        "query": "All : __networksec_all__, critical, high, medium, low"
+      },
+      {
+        "name": "category",
+        "label": "Event category",
+        "type": "custom",
+        "current": {
+          "text": "All",
+          "value": "__networksec_all__",
+          "selected": true
+        },
+        "includeAll": false,
+        "multi": false,
+        "options": [
+          {
+            "text": "All",
+            "value": "__networksec_all__",
+            "selected": true
+          },
+          {
+            "text": "interface",
+            "value": "interface",
+            "selected": false
+          },
+          {
+            "text": "routing",
+            "value": "routing",
+            "selected": false
+          },
+          {
+            "text": "authentication",
+            "value": "authentication",
+            "selected": false
+          },
+          {
+            "text": "firewall",
+            "value": "firewall",
+            "selected": false
+          },
+          {
+            "text": "configuration",
+            "value": "configuration",
+            "selected": false
+          },
+          {
+            "text": "security",
+            "value": "security",
+            "selected": false
+          }
+        ],
+        "query": "All : __networksec_all__, interface, routing, authentication, firewall, configuration, security"
+      },
+      {
+        "name": "incident",
+        "label": "Incident ID",
+        "type": "textbox",
+        "current": {
+          "text": "__networksec_all__",
+          "value": "__networksec_all__",
+          "selected": true
+        },
+        "includeAll": false,
+        "multi": false,
+        "options": [
+          {
+            "text": "__networksec_all__",
+            "value": "__networksec_all__",
+            "selected": true
+          }
+        ],
+        "query": "__networksec_all__"
+      }
+    ]
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "name": "NetworkSec KPI PostgreSQL",
+  "uid": "networksec-kpi-postgres",
+  "type": "grafana-postgresql-datasource",
+  "access": "proxy",
+  "url": "postgres:5432",
+  "user": "networksec_kpi",
+  "isDefault": false,
+  "jsonData": {
+    "database": "networksec",
+    "sslmode": "disable",
+    "postgresVersion": 1700,
+    "maxOpenConns": 5,
+    "maxIdleConns": 2,
+    "maxIdleConnsAuto": false,
+    "connMaxLifetime": 300
+  }
+}
