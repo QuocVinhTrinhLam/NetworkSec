@@ -1,10 +1,12 @@
 # Operational API v1
 
-Routes below use the `/api/v1` prefix. The local development instance exposes `/openapi.json` and `/docs`. Use the generated specification to integrate with production. The existing browser dashboard and the original cursor-based events API remain available. [OpenAPI specification](openapi.json) · [Legacy API details](api.md)
+Routes below use the `/api/v1` prefix. Local development serves `/openapi.json`. Use the generated specification for production integrations. The original cursor-based events API remains available. [OpenAPI specification](openapi.json) · [Cursor API details](api.md)
 
 ## Authentication and errors
 
-Use `Authorization: Bearer <access_token>` for the separate frontend. The existing administrator GUI supports its signed session cookie. In operational mode that cookie is backed by a separate revocable PostgreSQL session. Cookie-authenticated API mutations require the matching `X-CSRF-Token` header. Any supplied Authorization header takes precedence. All authenticated endpoints check roles on the server. [Frontend workflow](frontend-integration.md) · [Role matrix](backend-security-review.md)
+Send `Authorization: Bearer <access_token>` after calling `POST /api/v1/auth/login`. The API authenticates only explicit bearer headers and checks roles on the server. Existing unexpired bearer sessions carry forward with the same PostgreSQL database and bootstrap configuration. Grafana uses its own sign-in and read-only datasources. [Grafana integration](grafana-integration.md).
+
+Clients of `/api/v1/dashboard/summary` must switch to `GET /api/v1/reports/summary`, which accepts the same filters and returns the same schema. Clients using the Custom Dashboard's HTML paths or signed cookies must migrate to Grafana or bearer-authenticated API calls.
 
 The normal error shape is `{"detail":"message"}`. Schema validation returns 422 and may use an array of `loc`, `type`, and `msg` entries. Use the response's `X-Request-ID` when reporting an error. API responses carry `Cache-Control: no-store`.
 
@@ -12,7 +14,7 @@ The normal error shape is `{"detail":"message"}`. Schema validation returns 422 
 |---|---|
 | 400 | Reset an invalid Loki cursor and request the first page. |
 | 401 | Sign in again. Invalid credentials and expired, revoked or absent sessions fail authentication. |
-| 403 | The account lacks the required role or the legacy cookie mutation failed its CSRF check. |
+| 403 | The account lacks the required role. |
 | 404 | The requested resource is absent in the selected scope or, for legacy events, the selected time window. |
 | 409 | The user, device identity or rule conflicts with an existing resource or built-in rule policy. |
 | 413 | Reduce the request body. Versioned API mutations accept up to 4 MiB. |
@@ -45,7 +47,6 @@ The normal error shape is `{"detail":"message"}`. Schema validation returns 422 
 | Method and route | Role | Request | Success |
 |---|---|---|---|
 | GET `/storage/health` | Any | | `200 {status,loki,postgres}`. Check `status` for degradation. |
-| GET `/dashboard/summary` | Any | Time and applicable [KPI filters](kpi-contract.md) | `200 DashboardSummary` |
 | GET `/events/catalog` | Analyst, Admin | Catalog filters, sort, page | `200 Page<IndexedEvent>` |
 | GET `/events` | Analyst, Admin | Legacy cursor query, or `view=catalog` plus catalog filters, sort, and page | `200 EventPageResponse` or `200 Page<IndexedEvent>` |
 | GET `/events/{event_id}` | Analyst, Admin | Optional legacy lookup time window. Admin may add `include_raw=true` | `200 EventDetail` |

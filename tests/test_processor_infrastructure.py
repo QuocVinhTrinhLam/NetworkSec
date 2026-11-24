@@ -29,6 +29,19 @@ def test_compose_wires_hardened_processor_to_required_volumes_and_services() -> 
     ]
 
 
+def test_compose_keeps_grafana_and_legacy_notification_storage_wired() -> None:
+    services = yaml.safe_load(Path("compose.yaml").read_text(encoding="utf-8"))["services"]
+    assert "dashboard" not in services
+    assert services["api"]["volumes"] == []
+    assert services["api"]["ports"][0].startswith("${BIND_HOST:-127.0.0.1}:")
+    assert services["grafana"]["ports"][0].startswith("${GRAFANA_BIND_HOST:-127.0.0.1}:")
+    assert services["grafana"]["environment"]["GF_AUTH_ANONYMOUS_ENABLED"] == "false"
+    assert set(services["bot"]["depends_on"]) == {"processor"}
+    assert "GRAFANA_PUBLIC_URL" in services["bot"]["environment"]
+    for service in ("bot", "mock"):
+        assert "monitor-data:/app/data" in services[service]["volumes"]
+
+
 def test_rsyslog_preserves_raw_and_emits_versioned_json_envelope() -> None:
     template = Path("infra/rsyslog/rsyslog.conf.template").read_text(encoding="utf-8")
 

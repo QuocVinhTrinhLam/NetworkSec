@@ -1,4 +1,4 @@
-"""Export the frontend API from the actual route declarations."""
+"""Export the operational API from the actual route declarations."""
 
 from __future__ import annotations
 

@@ -28,7 +28,7 @@ from app.schemas.backend import (
 )
 from app.storage.backend import DuplicateResource, PostgresBackendStorage, audit
 from app.storage.base import StorageError
-from app.web.auth import PBKDF2_ITERATIONS, hash_password, require_api_csrf, verify_password
+from app.web.auth import PBKDF2_ITERATIONS, hash_password, verify_password
 
 DUMMY_HASH = (
     f"pbkdf2_sha256${PBKDF2_ITERATIONS}$AAAAAAAAAAAAAAAAAAAAAA$"
@@ -41,13 +41,12 @@ def unauthenticated() -> HTTPException:
     return HTTPException(401, "Authentication required", headers={"WWW-Authenticate": "Bearer"})
 
 
-def _digest(token: str, *, cookie: bool = False) -> str:
-    value = f"cookie:{token}" if cookie else token
-    return hashlib.sha256(value.encode()).hexdigest()
+def _digest(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
 
 
 class LoginThrottle:
-    """Bound costly verification across both login forms in the dashboard process."""
+    """Bound costly password verification in the API process."""
 
     def __init__(self) -> None:
         self._lock = Lock()
@@ -72,11 +71,11 @@ class ApiAccounts:
             settings.session_secret.encode(), settings.admin_password_hash.encode(), "sha256"
         ).hexdigest()
 
-    def login(self, credentials: Login, *, cookie: bool = False) -> SessionResponse | None:
+    def login(self, credentials: Login) -> SessionResponse | None:
         configured_admin = credentials.username == self.settings.admin_username
         account = None
         with self.storage._connect() as connection:
-            if not configured_admin and not cookie and "\x00" not in credentials.username:
+            if not configured_admin and "\x00" not in credentials.username:
                 account = connection.execute(
                     "SELECT * FROM api_users WHERE username = %s FOR SHARE", (credentials.username,)
                 ).fetchone()
@@ -98,15 +97,14 @@ class ApiAccounts:
                 return None
             role = Role(account["role"]) if account is not None else Role.ADMIN
             token = secrets.token_urlsafe(32)
-            lifetime = 8 * 60 * 60 if cookie else self.settings.api_session_seconds
-            expires = datetime.now(UTC) + timedelta(seconds=lifetime)
+            expires = datetime.now(UTC) + timedelta(seconds=self.settings.api_session_seconds)
             connection.execute("DELETE FROM api_sessions WHERE expires_at <= now()")
             # The configured bootstrap account lives outside api_users.
             connection.execute(
                 "INSERT INTO api_sessions (token_hash, username, bootstrap_version, expires_at) "
                 "VALUES (%s, %s, %s, %s)",
                 (
-                    _digest(token, cookie=cookie),
+                    _digest(token),
                     credentials.username,
                     self.bootstrap_version if configured_admin else None,
                     expires,
@@ -119,7 +117,7 @@ class ApiAccounts:
             user=Principal(username=credentials.username, role=role),
         )
 
-    def authenticate(self, token: str, *, cookie: bool = False) -> Principal | None:
+    def authenticate(self, token: str) -> Principal | None:
         if len(token) != 43 or not token.isascii():
             return None
         with self.storage._connect() as connection:
@@ -130,7 +128,7 @@ class ApiAccounts:
                 LEFT JOIN api_users AS account USING (username)
                 WHERE token_hash = %s AND expires_at > now()
                 """,
-                (_digest(token, cookie=cookie),),
+                (_digest(token),),
             ).fetchone()
         if row is None:
             return None
@@ -147,11 +145,9 @@ class ApiAccounts:
             return Principal(username=row["username"], role=row["role"])
         return None
 
-    def logout(self, token: str, actor: str, *, cookie: bool = False) -> None:
+    def logout(self, token: str, actor: str) -> None:
         with self.storage._connect() as connection:
-            connection.execute(
-                "DELETE FROM api_sessions WHERE token_hash = %s", (_digest(token, cookie=cookie),)
-            )
+            connection.execute("DELETE FROM api_sessions WHERE token_hash = %s", (_digest(token),))
             audit(connection, "auth.logout", "session", None, actor)
 
     def users(self, page: int, size: int) -> list[UserRecord]:
@@ -228,43 +224,21 @@ class ApiAccounts:
         return UserRecord.model_validate(row)
 
 
-def _cookie_principal(request: Request) -> Principal | None:
-    settings: Settings = request.app.state.settings
-    if request.session.get("user") != settings.admin_username:
-        return None
-    accounts: ApiAccounts | None = request.app.state.accounts
-    if accounts is None:
-        return Principal(username=settings.admin_username, role=Role.ADMIN)
-    token = request.session.get("legacy_session")
-    return accounts.authenticate(token, cookie=True) if isinstance(token, str) else None
-
-
-def require_user(request: Request) -> str:
-    if actor := _cookie_principal(request):
-        return actor.username
-    raise HTTPException(303, "Authentication required", headers={"Location": "/login"})
-
-
-def logout_cookie(request: Request, actor: str) -> None:
-    accounts: ApiAccounts | None = request.app.state.accounts
-    if accounts is not None:
-        accounts.logout(request.session["legacy_session"], actor, cookie=True)
-    request.session.clear()
+def require_bearer(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
+) -> str:
+    if credentials is None:
+        raise unauthenticated()
+    return credentials.credentials
 
 
 def principal(
     request: Request,
-    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
+    token: Annotated[str, Depends(require_bearer)],
 ) -> Principal:
-    if "authorization" in request.headers:
-        accounts: ApiAccounts | None = request.app.state.accounts
-        if credentials and accounts and (actor := accounts.authenticate(credentials.credentials)):
-            return actor
-        raise unauthenticated()
-    if actor := _cookie_principal(request):
+    accounts: ApiAccounts | None = request.app.state.accounts
+    if accounts and (actor := accounts.authenticate(token)):
         return actor
-    if request.app.state.backend is None:
-        raise HTTPException(401, "Authentication required", headers={"WWW-Authenticate": "Session"})
     raise unauthenticated()
 
 
@@ -275,14 +249,6 @@ def roles(*allowed: Role) -> Callable[..., Principal]:
         return actor
 
     return permitted
-
-
-def mutation_csrf(
-    request: Request,
-    _actor: Annotated[Principal, Depends(principal)],
-) -> None:
-    if "authorization" not in request.headers:
-        require_api_csrf(request)
 
 
 def consume_login_attempt(request: Request) -> None:

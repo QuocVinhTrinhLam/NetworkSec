@@ -1,11 +1,10 @@
 from pathlib import Path
 
 import pytest
-from fastapi import HTTPException, Request
 
 from app.config import Settings
 from app.main import create_app
-from app.web.auth import hash_password, validate_csrf, verify_password
+from app.web.auth import hash_password, verify_password
 
 
 def test_missing_session_secret_is_rejected(tmp_path: Path) -> None:
@@ -45,11 +44,3 @@ def test_local_development_allows_placeholder_session_secret(tmp_path: Path) -> 
     app = create_app(settings)
 
     assert app.state.settings.bind_host == "127.0.0.1"
-
-
-def test_qa02_csrf_rejects_unpaired_surrogates() -> None:
-    request = Request({"type": "http", "session": {"csrf_token": "test-token"}})
-    validate_csrf(request, "test-token")
-    with pytest.raises(HTTPException) as error:
-        validate_csrf(request, "\ud800")
-    assert error.value.status_code == 403

@@ -195,7 +195,7 @@ def test_formatter_bounds_and_escapes_hostile_fields() -> None:
 
 
 def test_callback_payloads_fit_telegram_limit() -> None:
-    keyboard = alert_keyboard(_alert("a" * 64), "http://localhost:8000")
+    keyboard = alert_keyboard(_alert("a" * 64))
     callback_values = [
         button["callback_data"]
         for row in keyboard["inline_keyboard"]
@@ -210,7 +210,7 @@ def test_callback_payloads_fit_telegram_limit() -> None:
 async def test_aiogram_gateway_calls_mocked_bot_api() -> None:
     bot = FakeAiogramBot()
     gateway = AiogramGateway(bot)  # type: ignore[arg-type]
-    keyboard = alert_keyboard(_alert("a" * 64), "http://localhost:8000")
+    keyboard = alert_keyboard(_alert("a" * 64))
 
     message_id = await gateway.send_message(1234, "safe", keyboard)
     await gateway.edit_message(1234, message_id, "updated", keyboard)

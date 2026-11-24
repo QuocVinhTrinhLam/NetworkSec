@@ -95,6 +95,7 @@ async def test_aggregate_notifications_use_threshold_claim_and_edit_without_dupl
         database_path=tmp_path / "notifications.db",
         allowed_chat_ids={1234},
         minimum_severity="high",
+        grafana_public_url="https://metrics.example.test/observability",
     )
     worker = AggregatedNotificationWorker(settings, store, gateway)  # type: ignore[arg-type]
 
@@ -109,3 +110,20 @@ async def test_aggregate_notifications_use_threshold_claim_and_edit_without_dupl
     assert len(gateway.edited) == 1
     assert gateway.edited[0][1] == 700
     assert "Count: <b>101</b>" in gateway.edited[0][2]
+    assert (
+        gateway.sent[0][2]
+        == gateway.edited[0][3]
+        == {
+            "inline_keyboard": [
+                [
+                    {
+                        "text": "Open in Grafana",
+                        "url": (
+                            "https://metrics.example.test/observability/d/network-incident-operations"
+                            f"?var-incident={ALERT_ID}"
+                        ),
+                    }
+                ]
+            ]
+        }
+    )

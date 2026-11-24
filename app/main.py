@@ -1,8 +1,7 @@
-"""FastAPI dashboard process."""
+"""Headless NetworkSec operational API."""
 
 from __future__ import annotations
 
-import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from urllib.parse import urlsplit
@@ -13,16 +12,11 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
-from starlette.middleware.sessions import SessionMiddleware
 
-from app.config import BASE_DIR, Settings, get_settings
-from app.db import Database
+from app.config import Settings, get_settings
 from app.logging_config import configure_logging
 from app.services.backend import request_id
 from app.services.correlation import load_correlation_config
-from app.services.storage import StorageWriter
 from app.services.topology import load_topology
 from app.storage.backend import DuplicateResource, PostgresBackendStorage
 from app.storage.base import AlertStateStorage, LogStorage, StorageError, StorageUnavailableError
@@ -33,9 +27,6 @@ from app.web.accounts import ApiAccounts, LoginThrottle
 from app.web.api import create_api_router
 from app.web.backend import create_backend_router
 from app.web.body_limit import BodyLimitMiddleware
-from app.web.routes import create_router
-
-LOGGER = logging.getLogger(__name__)
 
 
 def create_app(
@@ -65,7 +56,7 @@ def create_app(
     if (public_bind or (production and current.app_url.startswith("https://"))) and (
         not current.session_https_only
     ):
-        raise RuntimeError("Public binds and HTTPS require secure cookies")
+        raise RuntimeError("Public binds and HTTPS require SESSION_HTTPS_ONLY for HSTS")
     if not 300 <= current.api_session_seconds <= 28800:
         raise RuntimeError("API_SESSION_SECONDS must be between 300 and 28800")
     for origin in current.frontend_origins:
@@ -85,8 +76,6 @@ def create_app(
             )
         ):
             raise RuntimeError("FRONTEND_ORIGINS must contain explicit origins")
-    database = Database(current.database_path)
-    database.initialize()
     logs = log_storage or LokiLogStorage(
         current.loki_url,
         timeout_seconds=current.loki_timeout_seconds,
@@ -108,20 +97,14 @@ def create_app(
         alert_states.migrate()
         if backend is not None and alert_states is not backend:
             backend.migrate()
-        database.set_state("event_source_health", "connected")
         yield
 
     app = FastAPI(
         title=current.app_name,
         lifespan=lifespan,
         openapi_url=None if production else "/openapi.json",
-    )
-    app.add_middleware(
-        SessionMiddleware,
-        secret_key=current.session_secret,
-        https_only=current.session_https_only,
-        same_site="lax",
-        max_age=8 * 60 * 60,
+        docs_url=None,
+        redoc_url=None,
     )
     app.add_middleware(BodyLimitMiddleware)
     if production:
@@ -194,9 +177,10 @@ def create_app(
         )
         return response
 
-    templates = Jinja2Templates(directory=BASE_DIR / "app" / "templates")
-    app.mount("/static", StaticFiles(directory=BASE_DIR / "app" / "static"), name="static")
-    app.include_router(create_router(database, current, templates, logs, alert_states))
+    @app.get("/health", include_in_schema=False)
+    async def health() -> dict[str, str]:
+        return {"status": "ok", "mode": "api"}
+
     app.include_router(create_api_router(logs, alert_states))
     app.include_router(
         create_backend_router(
@@ -206,10 +190,6 @@ def create_app(
             load_topology(current.topology_config_path),
         )
     )
-    app.state.database = database
-    app.state.log_storage = logs
-    app.state.alert_storage = alert_states
-    app.state.storage_writer = StorageWriter(logs, alert_states)
     app.state.settings = current
     app.state.backend = backend
     app.state.accounts = ApiAccounts(backend, current) if backend is not None else None

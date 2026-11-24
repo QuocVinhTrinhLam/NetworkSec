@@ -34,9 +34,9 @@ curl -fsS http://127.0.0.1:3000/api/health
 docker compose exec -T postgres sh -c 'psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT version, applied_at FROM schema_migrations ORDER BY version"'
 ```
 
-The URLs above use the default published ports. Adjust them to match the confirmed Compose port mapping. The dashboard `/health` is a process check. The Loki and rsyslog container health checks validate configuration. Require the explicit Loki readiness check, the processor heartbeat and an authenticated `GET /api/v1/storage/health` with both dependencies `ready`. Confirm migration versions 001–009 appear once. [Compose CLI](https://docs.docker.com/reference/cli/docker/compose/up/)
+The URLs above use the default published ports. Adjust them to match the confirmed Compose port mapping. The API `/health` is a process check. The Loki and rsyslog container health checks validate configuration. Require the explicit Loki readiness check, the processor heartbeat and an authenticated `GET /api/v1/storage/health` with both dependencies `ready`. Confirm migration versions 001–010 appear once. [Compose CLI](https://docs.docker.com/reference/cli/docker/compose/up/)
 
-- [ ] Provision the KPI datasource with only the four view grants and verify both Grafana datasource health checks. Test the non-admin frontend role and KPI/deep-link flow separately. Keep Grafana's Loki queries within the authorized operator audience. [Grafana provisioning](grafana-integration.md)
+- [ ] Configure the PostgreSQL datasource with only the documented view grants and verify both Grafana datasource health checks. Test the non-admin API role and incident deep link separately. Keep Grafana's Loki queries within the authorized operator audience. [Grafana provisioning](grafana-integration.md)
 - [ ] Capture restart counts, resource use, syslog spool/queue growth, processor health and the UTC acceptance window. Confirm disk retention and backup/restore for the raw spool, processor checkpoints, database and Loki. If any critical check fails, preserve that evidence and use the rehearsed rollback on the same volumes or the operator-controlled restore copy.
 
 ## Read-only GNS3 and RouterOS checks

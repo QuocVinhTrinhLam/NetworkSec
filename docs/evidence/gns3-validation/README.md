@@ -51,7 +51,7 @@ From an authenticated Dashboard session, inspect `GET /api/v1/storage/health` an
 | Invalid record | On the disposable test collector, submit a fixture the parser rejects. Confirm a dead-letter increment and a subsequent valid event processed normally. | Pending |
 | Restart and replay | During an approved test window, restart the processor, then collector as applicable. Confirm health, checkpoint reuse, recovery from the persisted queue, and stable incident/catalog counts. | Pending |
 
-For ingestion checks, compare `/api/v1/events/catalog`, `/api/v1/dashboard/summary`, and the **Network Event KPIs** dashboard with identical UTC boundaries and supported filters. Compare device and transition metadata through `/api/v1/events/{event_id}`, `/api/v1/alerts/{alert_id}/evidence`, and `/api/v1/topology`.
+For ingestion checks, compare `/api/v1/events/catalog`, `/api/v1/reports/summary`, and the **Network Event KPIs** dashboard with identical UTC boundaries and supported filters. Compare device and transition metadata through `/api/v1/events/{event_id}`, `/api/v1/alerts/{alert_id}/evidence`, and `/api/v1/topology`.
 
 These commands restart the processor and collector in the approved disposable environment.
 

@@ -1,0 +1,151 @@
+{
+  "uid": "network-incident-operations",
+  "title": "Incident Operations",
+  "description": "Incident queue, status transitions and OSPF endpoint evidence.",
+  "editable": false,
+  "schemaVersion": 39,
+  "version": 1,
+  "timezone": "utc",
+  "tags": [
+    "networksec",
+    "incidents",
+    "ospf"
+  ],
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "table",
+      "title": "Incidents",
+      "description": "Shows incidents active across the selected window and recently resolved incidents. Enter an incident ID to look up any recorded incident.",
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "Incident ID"},
+            "properties": [
+              {"id": "custom.width", "value": 570},
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Show incident history",
+                    "url": "d/network-incident-operations?${__url_time_range}&var-incident=${__value.raw}"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "networksec-kpi-postgres"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "networksec-kpi-postgres"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT incident_id::text AS \"Incident ID\", device_name AS \"Device\", severity AS \"Severity\",\n       status AS \"Operator status\", event_count AS \"Events\", first_seen AS \"First seen\", last_seen AS \"Last seen\",\n       status_changed_at AS \"Status changed\", ospf_scope AS \"OSPF scope\", ospf_link AS \"OSPF link\",\n       technical_recovered_at AS \"OSPF recovery confirmed\", superseded_at AS \"Superseded\"\nFROM grafana_incidents\nWHERE (${incident:sqlstring} <> '__networksec_all__' AND incident_id = ${incident:sqlstring})\n   OR (${incident:sqlstring} = '__networksec_all__' AND superseded_at IS NULL\n       AND first_seen < to_timestamp(${__to}/1000.0)\n       AND (status <> 'resolved' OR status_changed_at >= to_timestamp(${__from}/1000.0)))\nORDER BY status = 'resolved', last_seen DESC, incident_id\nLIMIT 500"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "table",
+      "title": "Status history",
+      "description": "Enter an incident ID to see when and how its status changed.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "networksec-kpi-postgres"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 10
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "networksec-kpi-postgres"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT changed_at AS \"Time\", previous_status AS \"Previous status\", status AS \"Status\", source AS \"Source\"\nFROM grafana_incident_history\nWHERE ${incident:sqlstring} <> '__networksec_all__' AND incident_id = ${incident:sqlstring}\nORDER BY change_id DESC\nLIMIT 200"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "table",
+      "title": "OSPF endpoint evidence",
+      "description": "Latest reliable neighbor state by endpoint and last observation time. An empty link indicates an unmapped peer. Enter an OSPF incident ID to show evidence for its configured link.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "networksec-kpi-postgres"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 20
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "networksec-kpi-postgres"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT scope AS \"Scope\", link_id AS \"Link\", area AS \"Area\",\n       device_name AS \"Reporter\", interface_name AS \"Interface\",\n       local_router_id AS \"Local router ID\", peer_router_id AS \"Peer router ID\",\n       neighbor_state AS \"Neighbor state\", last_observed_at AS \"Last observed\"\nFROM grafana_ospf_endpoints AS endpoint\nWHERE ${incident:sqlstring} = '__networksec_all__' OR EXISTS (\n    SELECT 1 FROM grafana_incidents AS selected\n    WHERE selected.incident_id = ${incident:sqlstring}\n      AND selected.ospf_scope = endpoint.scope AND selected.ospf_link = endpoint.link_id\n)\nORDER BY last_observed_at DESC, scope, link_id, local_router_id, peer_router_id\nLIMIT 500"
+        }
+      ]
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "incident",
+        "label": "Incident ID",
+        "type": "textbox",
+        "current": {
+          "text": "__networksec_all__",
+          "value": "__networksec_all__",
+          "selected": true
+        },
+        "includeAll": false,
+        "multi": false,
+        "options": [
+          {
+            "text": "__networksec_all__",
+            "value": "__networksec_all__",
+            "selected": true
+          }
+        ],
+        "query": "__networksec_all__"
+      }
+    ]
+  }
+}

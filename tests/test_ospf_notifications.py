@@ -6,8 +6,9 @@ from aiogram.methods import SendMessage
 
 from app.bot.aiogram_runtime import AiogramGateway
 from app.bot.notification_models import TelegramSendDeferred
-from app.bot.ospf import _dashboard_keyboard
 from app.bot.telegram import PermanentTelegramError
+from app.config import Settings
+from app.services.grafana import incident_link
 
 
 @pytest.mark.parametrize(
@@ -21,17 +22,21 @@ from app.bot.telegram import PermanentTelegramError
         "https://analyst@example.com",
         "https://example.com?a=b",
         "https://not|a|host",
+        "https://[bad",
+        "https://example.com:broken",
+        "https://api:8000",
+        "https://127.0.0.1",
     ],
 )
-def test_invalid_or_local_dashboard_urls_have_no_button(base: str) -> None:
-    assert _dashboard_keyboard(base, "a" * 64) is None
+def test_invalid_or_local_grafana_urls_have_no_link(base: str) -> None:
+    assert incident_link(Settings(grafana_public_url=base), "a" * 64) is None
 
 
-def test_dashboard_href_uses_configured_prefix_and_quoted_incident_id() -> None:
-    keyboard = _dashboard_keyboard("https://dashboard.example.com/lab/", "id/segment")
-    assert keyboard is not None
-    assert keyboard["inline_keyboard"][0][0]["url"] == (
-        "https://dashboard.example.com/lab/alerts/id%2Fsegment"
+def test_grafana_link_preserves_subpath_and_quotes_incident_id() -> None:
+    settings = Settings(grafana_public_url="https://metrics.example.com/lab/")
+    assert incident_link(settings, "id/segment & next") == (
+        "https://metrics.example.com/lab/d/network-incident-operations"
+        "?var-incident=id%2Fsegment+%26+next"
     )
 
 

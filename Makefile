@@ -1,4 +1,4 @@
-.PHONY: install up up-notifications down logs seed scenario test test-e2e test-syslog-integration test-processor-integration lint format build run compose-validate syslog-up syslog-generate syslog-replay benchmark-local benchmark-compose
+.PHONY: install up up-notifications down logs seed scenario test test-syslog-integration test-processor-integration lint format build run compose-validate syslog-up syslog-generate syslog-replay benchmark-local benchmark-compose
 
 NAME ?= ssh_bruteforce
 DURATION ?= 60
@@ -9,10 +9,10 @@ install:
 	.venv/bin/pip install -r requirements-dev.txt
 
 up:
-	docker compose up -d --build --wait postgres loki rsyslog processor dashboard
+	docker compose up -d --build --wait
 
 up-notifications:
-	docker compose --profile notifications up -d --build dashboard bot
+	docker compose --profile notifications up -d --build --wait
 
 down:
 	docker compose down
@@ -28,10 +28,6 @@ scenario:
 
 test:
 	.venv/bin/pytest -m "not e2e and not syslog_integration and not storage_integration and not processor_integration" --cov=app --cov-report=term-missing
-
-test-e2e:
-	.venv/bin/playwright install chromium
-	.venv/bin/pytest -m e2e
 
 test-syslog-integration:
 	RUN_SYSLOG_INTEGRATION=1 .venv/bin/pytest -m syslog_integration tests/integration

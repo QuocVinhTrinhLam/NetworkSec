@@ -139,8 +139,9 @@ services:
       start_period: 10s
     mem_limit: 128m
 
-  dashboard:
+  api:
     <<: *common-service
+    volumes: []
     environment:
       <<: *common-environment
       ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:-}
@@ -151,9 +152,6 @@ services:
       API_SESSION_SECONDS: ${API_SESSION_SECONDS:-3600}
       BIND_HOST: ${BIND_HOST:-127.0.0.1}
       CORRELATION_RULES_PATH: /app/config/correlation_rules.yaml
-      DEVICE_SILENT_MINUTES: ${DEVICE_SILENT_MINUTES:-15}
-      MOCK_MODE: "true"
-      DASHBOARD_BACKEND: operational
       FRONTEND_ORIGINS: ${FRONTEND_ORIGINS:-}
       GRAFANA_PUBLIC_URL: ${GRAFANA_PUBLIC_URL:-}
       GRAFANA_DASHBOARD_UID: ${GRAFANA_DASHBOARD_UID:-network-event-kpis}
@@ -171,7 +169,7 @@ services:
       postgres:
         condition: service_healthy
     ports:
-      - "${BIND_HOST:-127.0.0.1}:${DASHBOARD_PORT:-8000}:8000"
+      - "${BIND_HOST:-127.0.0.1}:${API_PORT:-${DASHBOARD_PORT:-8000}}:8000"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
       interval: 15s
@@ -225,7 +223,8 @@ services:
     environment:
       <<: *common-environment
       ALLOWED_CHAT_IDS: ${ALLOWED_CHAT_IDS:-}
-      APP_URL: ${APP_URL:-http://localhost:8000}
+      DEVICE_SILENT_MINUTES: ${DEVICE_SILENT_MINUTES:-15}
+      GRAFANA_PUBLIC_URL: ${GRAFANA_PUBLIC_URL:-}
       DEDUP_WINDOW_SECONDS: ${DEDUP_WINDOW_SECONDS:-60}
       MAX_MESSAGES_PER_MINUTE: ${MAX_MESSAGES_PER_MINUTE:-20}
       NOTIFICATION_INTERVAL_SECONDS: ${NOTIFICATION_INTERVAL_SECONDS:-2}
@@ -237,8 +236,6 @@ services:
       POSTGRES_DSN: "host=postgres port=5432 dbname=${POSTGRES_DB:-networksec} user=${POSTGRES_USER:-networksec} password=${POSTGRES_PASSWORD:-}"
       POSTGRES_MIGRATIONS_PATH: /app/migrations/postgresql
     depends_on:
-      dashboard:
-        condition: service_healthy
       processor:
         condition: service_healthy
     healthcheck:
@@ -267,9 +264,6 @@ services:
       <<: *common-environment
       MOCK_FIXTURE_PATH: /app/fixtures/alerts.json
       MOCK_SEVERITY_DISTRIBUTION: ${MOCK_SEVERITY_DISTRIBUTION:-low=40,medium=35,high=20,critical=5}
-    depends_on:
-      dashboard:
-        condition: service_healthy
     mem_limit: 64m
 
   syslog-generator:

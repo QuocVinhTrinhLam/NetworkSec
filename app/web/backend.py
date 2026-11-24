@@ -1,10 +1,11 @@
-"""Operational APIs for the separate dashboard frontend."""
+"""Operational APIs for NetworkSec operators and integrations."""
 
 from __future__ import annotations
 
 import csv
 import io
 import json
+import re
 from datetime import datetime, timedelta
 from pathlib import Path as FilePath
 from tempfile import TemporaryDirectory
@@ -12,7 +13,6 @@ from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response
-from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel, ValidationError
 from starlette.concurrency import run_in_threadpool
 
@@ -66,15 +66,7 @@ from app.services.managed_rules import (
 from app.services.topology import TopologyInventory, build_topology
 from app.storage.backend import PostgresBackendStorage
 from app.storage.base import EventQuery, LogStorage, StorageError, StorageUnavailableError
-from app.web.accounts import (
-    ApiAccounts,
-    bearer,
-    consume_login_attempt,
-    logout_cookie,
-    mutation_csrf,
-    principal,
-    roles,
-)
+from app.web.accounts import ApiAccounts, consume_login_attempt, principal, require_bearer, roles
 from app.web.api import API_ERRORS, BODY_ERRORS, NOT_FOUND
 
 Analyst = Annotated[Principal, Depends(roles(Role.ADMIN, Role.ANALYST))]
@@ -83,10 +75,10 @@ Reader = Annotated[Principal, Depends(principal)]
 PageNumber = Annotated[int, Query(ge=1, le=1000)]
 PageSize = Annotated[int, Query(ge=1, le=200)]
 ShortQuery = Annotated[str | None, Query(min_length=1, max_length=255, pattern=r"^[^\x00]+$")]
-CSRF = [Depends(mutation_csrf)]
 CONFLICT: dict[int | str, dict[str, Any]] = {
     409: {"model": ErrorResponse, "description": "Resource conflicts with existing state"}
 }
+_CSV_FORMULA = re.compile(r"^[\s\ufeff\u200b]*[=+@-]")
 
 
 class BuiltinRule(BaseModel):
@@ -165,7 +157,7 @@ def _csv_cell(value: object) -> object:
     if isinstance(value, (dict, list, tuple)):
         value = json.dumps(value, ensure_ascii=False)
     if isinstance(value, str) and (
-        value.startswith(("\t", "\r", "\n")) or value.lstrip().startswith(("=", "+", "-", "@"))
+        value.startswith(("\t", "\r", "\n")) or _CSV_FORMULA.match(value)
     ):
         return "'" + value
     return value
@@ -248,17 +240,13 @@ def create_backend_router(
     def me(actor: Reader) -> Principal:
         return actor
 
-    @router.post("/auth/logout", status_code=204, dependencies=CSRF, responses={**BODY_ERRORS})
+    @router.post("/auth/logout", status_code=204, responses={**BODY_ERRORS})
     def logout(
-        request: Request,
         actor: Reader,
         accounts: Accounts,
-        credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
+        token: Annotated[str, Depends(require_bearer)],
     ) -> Response:
-        if credentials:
-            accounts.logout(credentials.credentials, actor.username)
-        else:
-            logout_cookie(request, actor.username)
+        accounts.logout(token, actor.username)
         return Response(status_code=204)
 
     @router.get("/users", response_model=list[UserRecord])
@@ -274,7 +262,6 @@ def create_backend_router(
         "/users",
         status_code=201,
         response_model=UserRecord,
-        dependencies=CSRF,
         responses={**BODY_ERRORS, **CONFLICT},
     )
     def create_user(body: UserCreate, actor: Admin, accounts: Accounts) -> UserRecord:
@@ -283,7 +270,6 @@ def create_backend_router(
     @router.patch(
         "/users/{username}",
         response_model=UserRecord,
-        dependencies=CSRF,
         responses={**BODY_ERRORS, **NOT_FOUND},
     )
     def update_user(
@@ -295,10 +281,6 @@ def create_backend_router(
         accounts: Accounts,
     ) -> UserRecord:
         return _require(accounts.update_user(username, body, actor.username), "User")
-
-    @router.get("/dashboard/summary", response_model=DashboardSummary)
-    def dashboard_summary(actor: Reader, storage: Store, filters: Filters) -> DashboardSummary:
-        return summary(storage, actor, filters)
 
     @router.get("/events/catalog", response_model=Page[IndexedEvent])
     def catalog_events(
@@ -423,7 +405,6 @@ def create_backend_router(
         "/devices",
         status_code=201,
         response_model=DeviceRecord,
-        dependencies=CSRF,
         responses={**BODY_ERRORS, **CONFLICT},
     )
     def create_device(body: DeviceCreate, actor: Admin, storage: Store) -> DeviceRecord:
@@ -436,7 +417,6 @@ def create_backend_router(
     @router.patch(
         "/devices/{device_id}",
         response_model=DeviceRecord,
-        dependencies=CSRF,
         responses={**BODY_ERRORS, **CONFLICT, **NOT_FOUND},
     )
     def update_device(
@@ -450,7 +430,6 @@ def create_backend_router(
     @router.delete(
         "/devices/{device_id}",
         status_code=204,
-        dependencies=CSRF,
         responses={**BODY_ERRORS, **NOT_FOUND},
     )
     def deactivate_device(device_id: UUID, actor: Admin, storage: Store) -> Response:
@@ -528,7 +507,6 @@ def create_backend_router(
         "/rules",
         status_code=201,
         response_model=RuleRecord,
-        dependencies=CSRF,
         responses={**BODY_ERRORS, **CONFLICT},
     )
     def create_rule(body: RuleCreate, actor: Admin, storage: Store) -> RuleRecord:
@@ -543,7 +521,6 @@ def create_backend_router(
     @router.patch(
         "/rules/{rule_id}",
         response_model=RuleRecord,
-        dependencies=CSRF,
         responses={**BODY_ERRORS, **CONFLICT, **NOT_FOUND},
     )
     def update_rule(rule_id: RuleId, body: RulePatch, actor: Admin, storage: Store) -> RuleRecord:
@@ -552,7 +529,6 @@ def create_backend_router(
     @router.delete(
         "/rules/{rule_id}",
         status_code=204,
-        dependencies=CSRF,
         responses={**BODY_ERRORS, **CONFLICT, **NOT_FOUND},
     )
     def deactivate_rule(rule_id: RuleId, actor: Admin, storage: Store) -> Response:
@@ -564,7 +540,6 @@ def create_backend_router(
     @router.post(
         "/rules/{rule_id}/validate",
         response_model=RuleValidation,
-        dependencies=CSRF,
         responses={**BODY_ERRORS, **NOT_FOUND},
     )
     def validate_rule(rule_id: RuleId, _actor: Admin, storage: Store) -> RuleValidation:
@@ -575,7 +550,6 @@ def create_backend_router(
     @router.post(
         "/rules/{rule_id}/test",
         response_model=list[RuleOutcome] | list[CorrelationResult],
-        dependencies=CSRF,
         responses={**BODY_ERRORS, **NOT_FOUND},
     )
     def simulate_rule(

@@ -39,7 +39,7 @@ from app.storage.base import (
     StorageError,
     StorageUnavailableError,
 )
-from app.web.accounts import mutation_csrf, principal, roles
+from app.web.accounts import principal, roles
 
 AlertId = Annotated[
     str,
@@ -49,7 +49,7 @@ Analyst = Annotated[Principal, Depends(roles(Role.ADMIN, Role.ANALYST))]
 Reader = Annotated[Principal, Depends(principal)]
 API_ERRORS: dict[int | str, dict[str, Any]] = {
     401: {"model": ErrorResponse, "description": "Authentication required"},
-    403: {"model": ErrorResponse, "description": "Permission denied or invalid CSRF token"},
+    403: {"model": ErrorResponse, "description": "Permission denied"},
     422: {"model": ValidationErrorResponse, "description": "Invalid request"},
     502: {"model": ErrorResponse, "description": "Dependency operation failed"},
     503: {"model": ErrorResponse, "description": "Dependency is unavailable"},
@@ -284,7 +284,6 @@ def create_api_router(logs: LogStorage, alerts: AlertStateStorage) -> APIRouter:
         alert_id: AlertId,
         body: AlertAcknowledgementRequest,
         user: Analyst,
-        _csrf: Annotated[None, Depends(mutation_csrf)],
     ) -> AlertRecord:
         try:
             record = alerts.acknowledge(alert_id, user.username, body.note)
@@ -305,7 +304,6 @@ def create_api_router(logs: LogStorage, alerts: AlertStateStorage) -> APIRouter:
         alert_id: AlertId,
         body: AlertStatusUpdateRequest,
         user: Analyst,
-        _csrf: Annotated[None, Depends(mutation_csrf)],
     ) -> AlertRecord:
         if user.role is Role.ANALYST and body.status is AlertLifecycleStatus.NEW:
             raise HTTPException(403, "Permission denied")

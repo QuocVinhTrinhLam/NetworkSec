@@ -9,7 +9,6 @@ import time
 from collections import Counter
 from datetime import UTC, datetime
 from typing import Any, Protocol
-from urllib.parse import quote
 
 import httpx
 
@@ -131,9 +130,7 @@ class TelegramClient:
         )
 
 
-def alert_keyboard(
-    alert: dict[str, Any], app_url: str, *, acknowledged: bool = False
-) -> dict[str, Any]:
+def alert_keyboard(alert: dict[str, Any], *, acknowledged: bool = False) -> dict[str, Any]:
     """Build a keyboard whose callback data remains below Telegram's 64-byte cap."""
     alert_id = str(alert["id"])
     token = alert_id[:CALLBACK_TOKEN_LENGTH]
@@ -141,16 +138,7 @@ def alert_keyboard(
     if not acknowledged:
         action_row.append({"text": "✅ Acknowledge", "callback_data": f"a:{token}"})
     action_row.append({"text": "🔕 Mute rule 1h", "callback_data": f"m:{token}"})
-    rows: list[list[dict[str, str]]] = [action_row]
-    rows.append(
-        [
-            {
-                "text": "🖥 Open dashboard",
-                "url": f"{app_url.rstrip('/')}/alerts/{quote(alert_id, safe='')}",
-            }
-        ]
-    )
-    return {"inline_keyboard": rows}
+    return {"inline_keyboard": [action_row]}
 
 
 def _summary_text(count: int, rules: Counter[str]) -> str:
@@ -237,7 +225,7 @@ class NotificationWorker:
                 window_seconds=self.settings.dedup_window_seconds,
                 timezone_name=self.settings.telegram_timezone,
             )
-            keyboard = alert_keyboard(alert, self.settings.app_url)
+            keyboard = alert_keyboard(alert)
             message_ids = dict(decision.message_ids)
             for chat_id in self.settings.allowed_chat_ids:
                 key = str(chat_id)
@@ -405,7 +393,7 @@ class BotCommandHandler:
                             window_seconds=self.settings.dedup_window_seconds,
                             timezone_name=self.settings.telegram_timezone,
                         ),
-                        alert_keyboard(updated, self.settings.app_url, acknowledged=True),
+                        alert_keyboard(updated, acknowledged=True),
                     )
         elif alert_id and action == "m":
             alert = self.database.get_alert(alert_id)

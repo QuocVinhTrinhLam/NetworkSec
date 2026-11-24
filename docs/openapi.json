@@ -34,7 +34,7 @@
             }
           },
           "403": {
-            "description": "Permission denied or invalid CSRF token",
+            "description": "Permission denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -378,7 +378,7 @@
             }
           },
           "403": {
-            "description": "Permission denied or invalid CSRF token",
+            "description": "Permission denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -666,7 +666,7 @@
             }
           },
           "403": {
-            "description": "Permission denied or invalid CSRF token",
+            "description": "Permission denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -756,7 +756,7 @@
             }
           },
           "403": {
-            "description": "Permission denied or invalid CSRF token",
+            "description": "Permission denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -856,7 +856,7 @@
             }
           },
           "403": {
-            "description": "Permission denied or invalid CSRF token",
+            "description": "Permission denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -966,7 +966,7 @@
             }
           },
           "403": {
-            "description": "Permission denied or invalid CSRF token",
+            "description": "Permission denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -1086,7 +1086,7 @@
             }
           },
           "403": {
-            "description": "Permission denied or invalid CSRF token",
+            "description": "Permission denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -1187,7 +1187,7 @@
             }
           },
           "403": {
-            "description": "Permission denied or invalid CSRF token",
+            "description": "Permission denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -1285,7 +1285,7 @@
             }
           },
           "403": {
-            "description": "Permission denied or invalid CSRF token",
+            "description": "Permission denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -1354,7 +1354,7 @@
             }
           },
           "403": {
-            "description": "Permission denied or invalid CSRF token",
+            "description": "Permission denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -1475,7 +1475,7 @@
             }
           },
           "403": {
-            "description": "Permission denied or invalid CSRF token",
+            "description": "Permission denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -1559,7 +1559,7 @@
             }
           },
           "403": {
-            "description": "Permission denied or invalid CSRF token",
+            "description": "Permission denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -1679,7 +1679,7 @@
             }
           },
           "403": {
-            "description": "Permission denied or invalid CSRF token",
+            "description": "Permission denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -1730,253 +1730,6 @@
           },
           "404": {
             "description": "Resource not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/dashboard/summary": {
-      "get": {
-        "tags": [
-          "operations"
-        ],
-        "summary": "Dashboard Summary",
-        "operationId": "dashboard_summary_api_v1_dashboard_summary_get",
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "start",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "format": "date-time"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Start"
-            }
-          },
-          {
-            "name": "end",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "format": "date-time"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "End"
-            }
-          },
-          {
-            "name": "period",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "enum": [
-                "daily",
-                "weekly",
-                "monthly",
-                "custom"
-              ],
-              "type": "string",
-              "default": "daily",
-              "title": "Period"
-            }
-          },
-          {
-            "name": "device_id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "format": "uuid"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Device Id"
-            }
-          },
-          {
-            "name": "device_name",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 255,
-                  "pattern": "^[^\\x00]+$"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Device Name"
-            }
-          },
-          {
-            "name": "severity",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "$ref": "#/components/schemas/EventSeverity"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Severity"
-            }
-          },
-          {
-            "name": "category",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "$ref": "#/components/schemas/Category"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Category"
-            }
-          },
-          {
-            "name": "event_type",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "$ref": "#/components/schemas/EventType"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Event Type"
-            }
-          },
-          {
-            "name": "vendor",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "$ref": "#/components/schemas/EventVendor"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Vendor"
-            }
-          },
-          {
-            "name": "search",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 255,
-                  "pattern": "^[^\\x00]+$"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Search"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DashboardSummary"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Authentication required",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Permission denied or invalid CSRF token",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Invalid request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ValidationErrorResponse"
-                }
-              }
-            }
-          },
-          "502": {
-            "description": "Dependency operation failed",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "Dependency is unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -2231,7 +1984,7 @@
             }
           },
           "403": {
-            "description": "Permission denied or invalid CSRF token",
+            "description": "Permission denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -2498,7 +2251,7 @@
             }
           },
           "403": {
-            "description": "Permission denied or invalid CSRF token",
+            "description": "Permission denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -2777,7 +2530,7 @@
             }
           },
           "403": {
-            "description": "Permission denied or invalid CSRF token",
+            "description": "Permission denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -2858,7 +2611,7 @@
             }
           },
           "403": {
-            "description": "Permission denied or invalid CSRF token",
+            "description": "Permission denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -2938,7 +2691,7 @@
             }
           },
           "403": {
-            "description": "Permission denied or invalid CSRF token",
+            "description": "Permission denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -3018,7 +2771,7 @@
             }
           },
           "403": {
-            "description": "Permission denied or invalid CSRF token",
+            "description": "Permission denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -3110,7 +2863,7 @@
             }
           },
           "403": {
-            "description": "Permission denied or invalid CSRF token",
+            "description": "Permission denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -3257,7 +3010,7 @@
             }
           },
           "403": {
-            "description": "Permission denied or invalid CSRF token",
+            "description": "Permission denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -3341,7 +3094,7 @@
             }
           },
           "403": {
-            "description": "Permission denied or invalid CSRF token",
+            "description": "Permission denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -3449,7 +3202,7 @@
             }
           },
           "403": {
-            "description": "Permission denied or invalid CSRF token",
+            "description": "Permission denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -3555,7 +3308,7 @@
             }
           },
           "403": {
-            "description": "Permission denied or invalid CSRF token",
+            "description": "Permission denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -3664,7 +3417,7 @@
             }
           },
           "403": {
-            "description": "Permission denied or invalid CSRF token",
+            "description": "Permission denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -3969,7 +3722,7 @@
             }
           },
           "403": {
-            "description": "Permission denied or invalid CSRF token",
+            "description": "Permission denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -4250,7 +4003,7 @@
             }
           },
           "403": {
-            "description": "Permission denied or invalid CSRF token",
+            "description": "Permission denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -4342,7 +4095,7 @@
             }
           },
           "403": {
-            "description": "Permission denied or invalid CSRF token",
+            "description": "Permission denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -4426,7 +4179,7 @@
             }
           },
           "403": {
-            "description": "Permission denied or invalid CSRF token",
+            "description": "Permission denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -4549,7 +4302,7 @@
             }
           },
           "403": {
-            "description": "Permission denied or invalid CSRF token",
+            "description": "Permission denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -4657,7 +4410,7 @@
             }
           },
           "403": {
-            "description": "Permission denied or invalid CSRF token",
+            "description": "Permission denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -4768,7 +4521,7 @@
             }
           },
           "403": {
-            "description": "Permission denied or invalid CSRF token",
+            "description": "Permission denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -4888,7 +4641,7 @@
             }
           },
           "403": {
-            "description": "Permission denied or invalid CSRF token",
+            "description": "Permission denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -5022,7 +4775,7 @@
             }
           },
           "403": {
-            "description": "Permission denied or invalid CSRF token",
+            "description": "Permission denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -5306,7 +5059,7 @@
             }
           },
           "403": {
-            "description": "Permission denied or invalid CSRF token",
+            "description": "Permission denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -5645,7 +5398,7 @@
             }
           },
           "403": {
-            "description": "Permission denied or invalid CSRF token",
+            "description": "Permission denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -5892,7 +5645,7 @@
             }
           },
           "403": {
-            "description": "Permission denied or invalid CSRF token",
+            "description": "Permission denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -6163,7 +5916,7 @@
             }
           },
           "403": {
-            "description": "Permission denied or invalid CSRF token",
+            "description": "Permission denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -6444,7 +6197,7 @@
             }
           },
           "403": {
-            "description": "Permission denied or invalid CSRF token",
+            "description": "Permission denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -6731,7 +6484,7 @@
             }
           },
           "403": {
-            "description": "Permission denied or invalid CSRF token",
+            "description": "Permission denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -7081,7 +6834,7 @@
             }
           },
           "403": {
-            "description": "Permission denied or invalid CSRF token",
+            "description": "Permission denied",
             "content": {
               "application/json": {
                 "schema": {

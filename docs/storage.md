@@ -69,7 +69,7 @@ cùng transaction. Nếu Resolve đã commit, ACK trả lại bản ghi `resolve
 và không ghi note, lịch sử hoặc outbox. Nếu ACK giữ khóa trước, Resolve chờ và
 đóng alert sau khi ACK commit. Thao tác đổi status chủ ý sang `new` vẫn có thể mở lại alert.
 
-`get_ospf_incident()` và `get_alert_history()` cung cấp evidence và lịch sử qua adapter. Các API công khai giữ shape hiện có. Queue mặc định của API và Custom Dashboard bao gồm cả alert đang mở hơn 24 giờ. Request API có `start` hoặc `end` tiếp tục áp dụng lọc thời gian tường minh. Danh sách thiết bị và thống kê theo khoảng thời gian giữ semantics hiện có.
+`get_ospf_incident()` và `get_alert_history()` cung cấp evidence và lịch sử qua adapter. Queue mặc định của API và Grafana bao gồm cả alert đang mở hơn 24 giờ. Request API có `start` hoặc `end` tiếp tục áp dụng lọc thời gian tường minh. Danh sách thiết bị và thống kê theo khoảng thời gian giữ semantics hiện có.
 
 ## Migration và rollback
 

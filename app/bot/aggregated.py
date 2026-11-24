@@ -5,13 +5,13 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 from typing import Any
-from urllib.parse import quote
 
 from app.bot.formatter import format_alert
 from app.bot.telegram import PermanentTelegramError, TelegramGateway
 from app.config import Settings
 from app.schemas.api import AlertRecord
 from app.schemas.event import EventSeverity
+from app.services.grafana import incident_link
 from app.storage.base import AlertStateStorage
 
 LOGGER = logging.getLogger(__name__)
@@ -47,19 +47,8 @@ class AggregatedNotificationWorker:
 
     async def _deliver(self, alert: AlertRecord) -> None:
         text = format_alert(_telegram_view(alert), count=alert.count, window_seconds=_window(alert))
-        keyboard = {
-            "inline_keyboard": [
-                [
-                    {
-                        "text": "🖥 Open dashboard",
-                        "url": (
-                            f"{self.settings.app_url.rstrip('/')}/alerts/"
-                            f"{quote(alert.aggregate_id, safe='')}"
-                        ),
-                    }
-                ]
-            ]
-        }
+        url = incident_link(self.settings, alert.aggregate_id)
+        keyboard = {"inline_keyboard": [[{"text": "Open in Grafana", "url": url}]]} if url else None
         for chat_id in sorted(self.settings.allowed_chat_ids):
             try:
                 message_id = self.alerts.get_telegram_message_id(alert.aggregate_id, chat_id)

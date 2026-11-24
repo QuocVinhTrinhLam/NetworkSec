@@ -1,5 +1,7 @@
 # Frontend integration
 
+> This guide records the separate frontend contract at `5527465`. For Grafana-only, use the current [operational API](api-contract.md) and [Grafana setup](grafana-integration.md).
+
 The separate dashboard uses the versioned JSON API under `/api/v1`. The built-in Jinja dashboard keeps its same-origin session-cookie workflow. See the [API reference](api-contract.md).
 
 ## Configure the frontend

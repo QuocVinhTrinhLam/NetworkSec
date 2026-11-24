@@ -4,10 +4,8 @@ Base path: `/api/v1`. Contract version in paginated responses: `1.0`.
 
 ## Authentication and errors
 
-Dashboard Jinja dùng session cookie. Các mutation qua cookie yêu cầu `X-CSRF-Token`
-lấy từ session/dashboard. Frontend riêng dùng bearer token và API kiểm tra quyền theo vai trò.
-Request chưa đăng nhập nhận `401`. Thiếu quyền hoặc sai CSRF nhận `403`.
-Xem [API vận hành đầy đủ](api-contract.md) và [hướng dẫn frontend](frontend-integration.md).
+API dùng bearer token và kiểm tra quyền theo vai trò. Request chưa xác thực nhận `401`.
+Tài khoản thiếu quyền nhận `403`. [API vận hành đầy đủ](api-contract.md).
 
 Validation path/query/body do FastAPI/Pydantic thực hiện và trả `422`. Các lỗi backend được chuẩn hóa:
 
@@ -15,7 +13,7 @@ Validation path/query/body do FastAPI/Pydantic thực hiện và trả `422`. C�
 |---|---|
 | 400 | Cursor event không hợp lệ |
 | 401 | Chưa đăng nhập |
-| 403 | CSRF token thiếu/sai |
+| 403 | Thiếu quyền |
 | 404 | Alert không tồn tại |
 | 422 | Enum, ID, pagination, payload hoặc time range sai |
 | 502 | Backend trả dữ liệu/lệnh không hợp lệ |

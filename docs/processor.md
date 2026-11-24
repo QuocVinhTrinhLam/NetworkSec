@@ -99,7 +99,7 @@ Unit/component tests chạy không cần Docker và cover 100-event aggregation,
 partial record, DLQ và Telegram cooldown claim. Test worker OSPF mô phỏng Loki lỗi trước khi PostgreSQL ghi, PostgreSQL lỗi sau khi Loki ghi, retry cùng offset và import journal đã checkpoint. [Test PostgreSQL độc lập](storage.md#migration-và-rollback) kiểm tra migration, rollback, concurrent snapshot, stale/repeated Full và việc giữ quyết định operator. Test stack Compose là opt-in:
 
 ```bash
-docker compose up -d --build --wait postgres loki rsyslog processor dashboard
+docker compose up -d --build --wait
 RUN_PROCESSOR_INTEGRATION=1 python -m pytest -m processor_integration tests/integration
 ```
 

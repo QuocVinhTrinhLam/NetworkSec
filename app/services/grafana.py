@@ -3,13 +3,56 @@
 from __future__ import annotations
 
 import re
-from urllib.parse import urlencode, urlsplit
+from ipaddress import ip_address
+from urllib.parse import SplitResult, urlencode, urlsplit
 
 from app.config import Settings
 from app.services.backend import EventFilters
 
 _VARIABLE = re.compile(r"^[a-zA-Z0-9_-]{1,80}$")
 _FILTERS = {"device", "device_id", "severity", "category", "incident"}
+_HOST = re.compile(r"[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?")
+_INTERNAL_HOSTS = {"api", "dashboard", "grafana", "loki", "postgres"}
+
+
+def _grafana_url(base: str, *, for_notification: bool = False) -> SplitResult:
+    if any(character.isspace() or ord(character) < 32 for character in base):
+        raise ValueError("Invalid public Grafana URL")
+    url = urlsplit(base)
+    host = (url.hostname or "").rstrip(".")
+    try:
+        address = ip_address(host)
+    except ValueError:
+        address = None
+    if (
+        url.scheme not in ("http", "https")
+        or not host
+        or host in _INTERNAL_HOSTS
+        or (address is None and not _HOST.fullmatch(host))
+        or url.username is not None
+        or url.query
+        or url.fragment
+        or url.port == 0
+        or (
+            for_notification
+            and (
+                host.split(".")[-1] == "localhost"
+                or (address is not None and (address.is_loopback or address.is_unspecified))
+            )
+        )
+    ):
+        raise ValueError("Invalid public Grafana URL")
+    return url
+
+
+def incident_link(settings: Settings, incident_id: str) -> str | None:
+    """Link directly to a PostgreSQL incident from an operational notification."""
+    try:
+        url = _grafana_url(settings.grafana_public_url, for_notification=True)
+    except ValueError:
+        return None
+    query = urlencode({"var-incident": incident_id})
+    return f"{url.geturl().rstrip('/')}/d/network-incident-operations?{query}"
 
 
 def dashboard_link(
@@ -20,17 +63,9 @@ def dashboard_link(
 ) -> str | None:
     if not settings.grafana_public_url:
         return None
-    url = urlsplit(settings.grafana_public_url)
-    if (
-        url.scheme not in ("http", "https")
-        or not url.hostname
-        or url.hostname in {"loki", "grafana", "postgres", "dashboard"}
-        or url.username is not None
-        or url.query
-        or url.fragment
-        or not _VARIABLE.fullmatch(settings.grafana_dashboard_uid)
-    ):
-        raise ValueError("Invalid public Grafana URL or dashboard UID")
+    url = _grafana_url(settings.grafana_public_url)
+    if not _VARIABLE.fullmatch(settings.grafana_dashboard_uid):
+        raise ValueError("Invalid Grafana dashboard UID")
     mapping: dict[str, str] = {}
     for pair in filter(None, settings.grafana_variable_mapping.split(",")):
         key, _, name = pair.strip().partition("=")

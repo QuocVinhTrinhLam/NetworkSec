@@ -4,8 +4,8 @@
 
 Tài liệu này hướng dẫn operator triển khai thủ công và nghiệm thu Syslog lab. Luồng OSPF
 đã được kiểm thử phần mềm với bản ghi spool mô phỏng. Ubuntu Compose và tích hợp live
-GNS3 R1–R2 vẫn cần nghiệm thu tại môi trường đích. Sau nâng cấp, người dùng dashboard Jinja
-ở chế độ vận hành cần đăng nhập lại để nhận session có thể thu hồi trong PostgreSQL.
+GNS3 R1–R2 vẫn cần nghiệm thu tại môi trường đích. Grafana phục vụ giao diện giám sát.
+Tích hợp và thao tác vận hành dùng API JSON với bearer token.
 [Checklist Ubuntu và GNS3](ubuntu-deployment-checklist.md)
 
 ## Triển khai OSPF trên Ubuntu
@@ -22,8 +22,8 @@ Với deployment đang chạy, giữ tên Compose project, cấu hình và named
 | Processor | `PROCESSOR_SOURCE_TIMEZONE` mặc định `UTC`. Đồng bộ đồng hồ R1, R2 và Ubuntu; đặt timezone khớp timestamp không có offset của nguồn. Chuẩn hóa các nguồn timestamp kiểu này về cùng timezone trước khi thu nhận. |
 | Loki | `LOKI_BIND_HOST=127.0.0.1`, port mặc định `3100`. Các container truy cập `http://loki:3100`. |
 | Grafana | `GRAFANA_ADMIN_PASSWORD` bắt buộc khi bật Grafana. `GRAFANA_ADMIN_USER` mặc định `admin`; giữ `GRAFANA_BIND_HOST=127.0.0.1`, port mặc định `3000`. |
-| Custom Dashboard | `SESSION_SECRET` ngẫu nhiên, duy nhất và dài ít nhất 32 ký tự; `ADMIN_PASSWORD_HASH` tạo qua `python -m app.password_hash`. `ADMIN_USERNAME` mặc định `admin`; giữ `BIND_HOST=127.0.0.1`, `DASHBOARD_PORT=8000`. Dùng `SESSION_HTTPS_ONLY=true` khi truy cập qua HTTPS đã được cấu hình. |
-| Telegram tùy chọn | `TELEGRAM_BOT_TOKEN`, `ALLOWED_CHAT_IDS`, và `APP_URL` là URL Dashboard hợp lệ mà người nhận truy cập được để có nút mở sự cố. `TELEGRAM_MIN_SEVERITY` mặc định `medium`. |
+| API | `SESSION_SECRET` ngẫu nhiên, duy nhất và dài ít nhất 32 ký tự. Tạo `ADMIN_PASSWORD_HASH` qua `python -m app.password_hash`. Giữ `BIND_HOST=127.0.0.1` và `API_PORT=8000`. Dùng `SESSION_HTTPS_ONLY=true` để bật HSTS khi dùng HTTPS. |
+| Telegram tùy chọn | `TELEGRAM_BOT_TOKEN` và `ALLOWED_CHAT_IDS` bật bot. Đặt `GRAFANA_PUBLIC_URL` thành URL mà người nhận truy cập được. `TELEGRAM_MIN_SEVERITY` mặc định `medium`. |
 
 `SYSLOG_BIND_HOST` chỉ điều khiển IP host publish cho TCP và UDP; cả hai listener trong
 container vẫn nghe cổng `5514`. NIC lab và đường đi từ R1/R2 cần được chuẩn bị thủ công.
@@ -45,7 +45,7 @@ Syslog plaintext. Giữ các cổng quản trị trên loopback và dùng đư�
 
 ```bash
 docker compose --env-file .env --profile notifications config --quiet
-docker compose --env-file .env up -d --build --wait postgres loki rsyslog processor dashboard grafana
+docker compose --env-file .env up -d --build --wait
 docker compose ps
 curl -fsS http://127.0.0.1:3100/ready
 curl -fsS http://127.0.0.1:3000/api/health
@@ -53,7 +53,7 @@ curl -fsS http://127.0.0.1:8000/health
 docker compose exec -T processor python -m app.processor.healthcheck
 ```
 
-Đăng nhập Dashboard, xác nhận `/api/v1/storage/health` trả cả Loki và PostgreSQL
+Đăng nhập qua API, xác nhận `/api/v1/storage/health` trả cả Loki và PostgreSQL
 `ready`. Healthcheck Compose của Loki kiểm tra cấu hình; `/ready` kiểm tra runtime.
 Các container ứng dụng áp dụng migration `001`–`005` theo thứ tự. Giữ checksum của
 migration đã chạy. Nếu nâng cấp lỗi, giữ volumes, xem log đã khử dữ liệu nhạy cảm
@@ -83,14 +83,14 @@ docker compose --env-file .env --profile notifications up -d --build --wait bot
   xác nhận đường gửi và mẫu IPv4 `filterlog` block nếu thiết bị tham gia bài test.
 - [ ] Trong cửa sổ test được duyệt, tạo một lần gián đoạn transit. Đối chiếu raw spool,
   envelope, checkpoint/DLQ và Loki. Hai Down của cùng link phải hiện như hai observation
-  trong Grafana và một incident ID trong PostgreSQL/Custom Dashboard. Bản replay cùng
+  trong OSPF Observability và một incident ID trong Incident Operations. Bản replay cùng
   event ID không được tăng số evidence duy nhất.
 - [ ] ACK incident bằng tài khoản vận hành và ghi note. Sau khi phục hồi transit, kiểm
   tra INIT/2-WAY/EXSTART/EXCHANGE/LOADING và Full cũ không đóng incident. Nếu hai đầu đã
   báo Down, chỉ resolve khi mỗi đầu có Full tin cậy mới hơn Down tương ứng.
 - [ ] Sau Full xác nhận, kiểm tra cùng incident ID chuyển `resolved` với nguồn
   `ospf_recovery`, timestamp kỹ thuật, history, ACK và note còn nguyên. Đối chiếu cả
-  hai nguồn log trong Grafana và bản ghi bằng chứng trong Dashboard. Nếu operator đã
+  hai nguồn log trong Grafana và bằng chứng từ API. Nếu operator đã
   resolve thủ công, telemetry phục hồi chỉ cập nhật phần kỹ thuật.
 - [ ] Restart processor có kiểm soát trên môi trường test, replay input trùng và quan sát
   không phát sinh incident hoặc transition trùng. Lặp một lần Down sau recovery để xác
@@ -131,9 +131,9 @@ drop toàn bộ Linux capabilities và lưu state trong named volume.
 
 ```bash
 docker compose --file compose.yaml config --quiet
-docker compose --file compose.yaml up -d --build --wait postgres loki rsyslog processor dashboard
+docker compose --file compose.yaml up -d --build --wait
 docker compose --file compose.yaml ps
-docker compose --file compose.yaml logs --tail=200 dashboard
+docker compose --file compose.yaml logs --tail=200 api
 ```
 
 `config --quiet` được dùng để validation mà không in resolved environment có thể chứa secret. Không dùng
@@ -144,7 +144,7 @@ giá trị thật.
 Bot Telegram chỉ chạy khi có token thật và allowlist chat trong `.env`:
 
 ```bash
-docker compose --profile notifications up --build dashboard bot
+docker compose --profile notifications up --build bot
 ```
 
 Để dừng container mà giữ dữ liệu:
@@ -217,7 +217,7 @@ Tạo `.env` cục bộ và điền `POSTGRES_PASSWORD` ngẫu nhiên, không co
 
 ```bash
 docker compose config --quiet
-docker compose up --build postgres loki dashboard
+docker compose up --build postgres loki api
 docker compose ps
 ```
 
@@ -233,26 +233,42 @@ RUN_STORAGE_INTEGRATION=1 python -m pytest -m storage_integration
 
 Không lưu command có password vào shell history trên máy dùng chung; ưu tiên export từ file permission 0600 hoặc secret manager khi deploy thật.
 
-## Dashboard và notification Phase 6
+## Grafana và Telegram
 
 Đặt `GRAFANA_ADMIN_PASSWORD`, `TELEGRAM_BOT_TOKEN` và `ALLOWED_CHAT_IDS` trong `.env` được bảo vệ. Không dùng password Grafana mặc định. Khởi động Grafana cùng storage:
 
 ```bash
-docker compose up --build postgres loki grafana dashboard
+docker compose up -d --build --wait
 docker compose --profile notifications up --build bot
 ```
 
-Grafana datasource/dashboard là read-only provisioning tại `infra/grafana/`; thay đổi file rồi restart/recreate container nhưng giữ `grafana-data`. Custom Dashboard dùng `DASHBOARD_BACKEND=operational` trong Compose. Để chẩn đoán local không có storage, đặt `legacy` rõ ràng; không dùng legacy làm fallback production im lặng.
+Grafana nạp dashboard và datasource Loki từ `infra/grafana/`. Thiết lập datasource PostgreSQL
+với tài khoản chỉ đọc sau khi migration `010` hoàn tất. Giữ `grafana-data` khi tạo lại container.
+[Hướng dẫn cấu hình datasource](grafana-integration.md).
 
 Compose cấp 512 MiB RAM cho Grafana và dùng plugin Loki có sẵn trong image. Kiểm tra Grafana từ host tại `http://127.0.0.1:3000/api/health`. Nếu healthcheck báo lỗi, xem log khởi động bằng `docker compose logs --tail 100 grafana`.
 
-Grafana, PostgreSQL, Loki và Dashboard đều bind loopback mặc định. Nếu truy cập từ máy Windows host tới Ubuntu VM, dùng SSH tunnel hoặc reverse proxy TLS đã review; không đổi bind thành public chỉ để tiện demo.
+Grafana, PostgreSQL, Loki và API bind loopback mặc định. Dùng SSH tunnel hoặc reverse proxy TLS đã review khi truy cập từ máy Windows host tới Ubuntu VM.
 
 Bot PostgreSQL chạy các migration hiện có, gồm delivery outbox OSPF trong `005`, trước loop.
 
+## Nâng cấp Grafana-only
+
+Trước khi chuyển từ `5527465`, dùng checkout cũ với cùng Compose project để chạy
+`docker compose stop dashboard`. Service `api` dùng cùng cổng host mặc định. Có thể tiếp tục
+dùng `DASHBOARD_PORT` làm fallback khi chưa đặt `API_PORT`. Giữ tên project và các named volume
+hiện có. Sau khi build và khởi động cấu hình mới, kiểm tra migration `010` rồi bổ sung quyền
+đọc ba view Grafana cho role reader hiện có. Grafana Loki và dashboard KPI hiện có tiếp tục dùng
+cùng datasource UID. [Quyền PostgreSQL của Grafana](grafana-integration.md#configure-postgresql-access).
+
+Nếu rollback ứng dụng, dừng `api` từ checkout mới trước khi khởi động lại `dashboard` từ bản cũ.
+Migration `010` chỉ thêm view. Giữ dữ liệu và lịch sử migration, rồi kiểm tra phiên bản cũ trên
+bản sao thử nghiệm trước khi rollback. Bearer session đã cấp có thể tiếp tục dùng khi cấu hình
+và database giữ nguyên. Các client cũ cần đổi `/api/v1/dashboard/summary` thành `/api/v1/reports/summary`.
+
 ## Backend operational API
 
-Dashboard và processor áp dụng lần lượt migration PostgreSQL khi khởi động. Các migration mới
+API và processor áp dụng lần lượt migration PostgreSQL khi khởi động. Các migration mới
 bổ sung registry, event catalog, session, audit, rule quản lý và view KPI. Trước khi nâng cấp,
 backup PostgreSQL cùng các volume log/checkpoint theo quy trình lưu trữ hiện có. Hai dịch vụ
 dùng cùng bộ migration đã version hóa. Giữ nguyên volume nếu cần rollback phiên bản ứng dụng
@@ -263,10 +279,10 @@ và đánh giá tương thích schema trên môi trường cô lập trước kh
    `FRONTEND_ORIGINS` là danh sách origin phân cách bằng dấu phẩy và `TRUSTED_HOSTS` giữ
    `127.0.0.1` để healthcheck hoạt động. Khi dùng HTTPS, bật `SESSION_HTTPS_ONLY=true`.
 2. Xác thực cấu hình bằng `docker compose config --quiet`. Trên môi trường đã được duyệt,
-   chạy `docker compose up -d --build postgres loki rsyslog processor dashboard grafana`.
+   chạy `docker compose up -d --build --wait`.
    Xem `docker compose ps`, `curl -fsS http://127.0.0.1:8000/health` và
    `docker compose exec -T processor python -m app.processor.healthcheck`.
-3. Đăng nhập frontend qua tài khoản bootstrap rồi tạo tài khoản Admin, Analyst hoặc Viewer
+3. Đăng nhập API qua tài khoản bootstrap rồi tạo tài khoản Admin, Analyst hoặc Viewer
    theo [API contract](api-contract.md#sessions-and-users). Mặc định bearer session hết hạn
    sau 3.600 giây. Chỉ khai báo thiết bị và source address đã được xác minh ở collector.
 4. Ghi inventory vật lý/segment tại `config/topology.yaml`. Mỗi node gồm tên và loại, mỗi
@@ -275,8 +291,8 @@ và đánh giá tương thích schema trên môi trường cô lập trước kh
    `config/correlation_rules.yaml`. Bổ sung scope/area, Router ID, tên reporter và
    interface dựa trên kết quả xác nhận của operator. Đặt `source_addresses` tại từng endpoint
    để mapping kiểm tra địa chỉ peer của collector đối với các nguồn đã xác minh.
-   Dashboard và processor phải đọc cùng cấu hình correlation. Với cấu hình được đóng gói trong
-   image, cập nhật bằng `docker compose up -d --build processor dashboard` trong deployment
+   API và processor phải đọc cùng cấu hình correlation. Với cấu hình được đóng gói trong
+   image, cập nhật bằng `docker compose up -d --build processor api` trong deployment
    đã được duyệt. [Checklist live](evidence/gns3-validation/README.md).
 5. Đặt `GRAFANA_PUBLIC_URL` theo đường dẫn mà trình duyệt truy cập được. Nếu dùng reverse
    proxy subpath, bao gồm subpath trong base URL. Mặc định UID là `network-event-kpis`.
@@ -323,7 +339,7 @@ cần đo nhưng không bật Telegram notifications:
 
 ```bash
 docker compose config --quiet
-docker compose up -d --wait rsyslog postgres loki dashboard grafana
+docker compose up -d --wait
 python -m app.benchmark --mode compose --duration 10 --repetitions 3
 ```
 

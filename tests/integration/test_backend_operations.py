@@ -183,7 +183,7 @@ def test_registry_events_reports_and_kpi_parity(tmp_path, backend):
             is None
         )
         assert client.get("/api/v1/events/" + "0" * 64, headers=admin).status_code == 404
-        summary = client.get("/api/v1/dashboard/summary", headers=admin, params=params)
+        summary = client.get("/api/v1/reports/summary", headers=admin, params=params)
         assert summary.status_code == 200, summary.text
         assert summary.json()["total_events"] == 6
         assert summary.json()["device_status"] == {"active": 1}
@@ -329,7 +329,7 @@ def test_roles_revocation_and_audit(tmp_path, backend):
             assert "password" not in response.text
         viewer = _login(client, "observer", "fixture password")
         analyst = _login(client, "operator", "fixture password")
-        assert client.get(path + "/dashboard/summary", headers=viewer).status_code == 200
+        assert client.get(path + "/reports/summary", headers=viewer).status_code == 200
         assert client.get(path + "/topology", headers=viewer).status_code == 200
         assert client.get(path + "/reports/export", headers=viewer).status_code == 200
         assert (
@@ -386,48 +386,27 @@ def test_roles_revocation_and_audit(tmp_path, backend):
         assert restarted.get("/api/v1/auth/me", headers=admin).json()["role"] == "admin"
 
 
-def test_operational_cookie_and_bearer_have_independent_lifecycles(tmp_path, backend):
+def test_bearer_login_revokes_only_current_session_without_browser_cookies(tmp_path, backend):
     dsn, storage = backend
     with _client(tmp_path, dsn) as client:
         api = "/api/v1"
-        admin = _login(client)
-        for logout_path in ("/logout", api + "/auth/logout"):
-            csrf = client.get("/login").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-            login = client.post(
-                "/login",
-                data={"username": "admin", "password": "test bootstrap password", "csrf": csrf},
-                follow_redirects=False,
-            )
-            assert login.status_code == 303
-            assert client.get(api + "/auth/me").json()["role"] == "admin"
-            assert (
-                client.get(
-                    api + "/auth/me", headers={"Authorization": "Bearer invalid"}
-                ).status_code
-                == 401
-            )
-            assert client.get(api + "/users", headers=admin).status_code == 200
-            assert client.post(api + "/auth/logout").status_code == 403
-            with storage._connect() as connection:
-                assert (
-                    connection.execute("SELECT count(*) AS n FROM api_sessions").fetchone()["n"]
-                    == 2
-                )
-            csrf = client.get("/dashboard").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-            response = client.post(
-                logout_path,
-                headers={"X-CSRF-Token": csrf},
-                data={"csrf": csrf} if logout_path == "/logout" else None,
-                follow_redirects=False,
-            )
-            assert response.status_code == (303 if logout_path == "/logout" else 204)
-            assert client.get(api + "/auth/me").status_code == 401
-            assert client.get(api + "/auth/me", headers=admin).status_code == 200
-            with storage._connect() as connection:
-                assert (
-                    connection.execute("SELECT count(*) AS n FROM api_sessions").fetchone()["n"]
-                    == 1
-                )
+        login = client.post(
+            api + "/auth/login",
+            json={"username": "admin", "password": "test bootstrap password"},
+        )
+        assert login.status_code == 200
+        assert "set-cookie" not in login.headers
+        token = login.json()["access_token"]
+        first = {"Authorization": f"Bearer {token}"}
+        second = _login(client)
+        client.cookies.set("session", token)
+        assert client.get(api + "/auth/me").status_code == 401
+        assert client.post(api + "/auth/logout").status_code == 401
+        assert client.post(api + "/auth/logout", headers=first).status_code == 204
+        assert client.get(api + "/auth/me", headers=first).status_code == 401
+        assert client.get(api + "/auth/me", headers=second).status_code == 200
+        with storage._connect() as connection:
+            assert connection.execute("SELECT count(*) AS n FROM api_sessions").fetchone()["n"] == 1
 
 
 def test_catalog_failure_rolls_back_builtin_incident(tmp_path, backend, monkeypatch):

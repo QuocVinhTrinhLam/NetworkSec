@@ -84,9 +84,6 @@ class Settings:
     processor_health_max_age_seconds: int = field(
         default_factory=lambda: int(os.getenv("PROCESSOR_HEALTH_MAX_AGE_SECONDS", "30"))
     )
-    dashboard_backend: str = field(
-        default_factory=lambda: os.getenv("DASHBOARD_BACKEND", "legacy").lower()
-    )
     severity_config: Path = field(
         default_factory=lambda: Path(
             os.getenv("SEVERITY_CONFIG", str(BASE_DIR / "config" / "severity_map.yaml"))
@@ -97,7 +94,6 @@ class Settings:
             os.getenv("RULES_CATALOG", str(BASE_DIR / "config" / "rules_catalog.yaml"))
         )
     )
-    mock_mode: bool = field(default_factory=lambda: _bool("MOCK_MODE", True))
     mock_fixture_path: Path = field(
         default_factory=lambda: Path(
             os.getenv("MOCK_FIXTURE_PATH", str(BASE_DIR / "fixtures" / "alerts.json"))

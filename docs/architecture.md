@@ -5,7 +5,7 @@
 N4.2 thu nhận Syslog từ thiết bị mạng, Loghub và Python Syslog Generator. Mục tiêu triển
 khai lab là Ubuntu Server 2 vCPU, khoảng 5,3 GiB RAM, chạy Docker Compose. Chuỗi OSPF
 cho hai router MikroTik được kiểm thử bằng envelope mô phỏng từ processor đến Loki,
-PostgreSQL, Custom Dashboard và Telegram giả lập. Syslog live R1–R2, Grafana runtime
+PostgreSQL, API vận hành và Telegram giả lập. Syslog live R1–R2, Grafana runtime
 trong Compose và benchmark Ubuntu cần xác nhận riêng.
 
 ```text
@@ -22,11 +22,12 @@ GNS3 / Loghub / Python Generator
               v                    v
             Loki       SQLite journal -> PostgreSQL
               |                    |
-              v                    +--> FastAPI/Jinja (queue, evidence, ACK, Resolve)
-            Grafana                +--> Telegram (optional)
+              v                    +--> Grafana (KPI, incident, OSPF evidence)
+            Grafana                +--> FastAPI JSON (evidence, ACK, Resolve, administration)
+                                   +--> Telegram (optional)
 ```
 
-API sự kiện và liên kết điều tra từ Custom Dashboard cũng truy vấn Loki.
+API sự kiện cũng truy vấn Loki. Grafana là giao diện đồ họa duy nhất.
 
 ## Topology lab đã chốt
 
@@ -56,11 +57,11 @@ bị ngắt trong kiểm thử. Xem [checklist nghiệm thu live](deployment.md#
 | Loki | Raw/normalized log có nhãn cardinality thấp | Alert lifecycle và transactional outbox |
 | Processor SQLite | Byte checkpoint, DLQ, receipt và nhật ký tương quan OSPF có thể dựng lại | Alert lifecycle dùng chung |
 | PostgreSQL | Incident state, event references, lịch sử, ACK, resolve và notification outbox | Full-text raw log dài hạn |
-| Grafana | Quan sát lưu lượng sự kiện, OSPF Down/Full, bảng phân bố, timeline và điều tra log | Quản lý sự cố |
-| Custom Dashboard | Hàng đợi vận hành, bộ lọc, bằng chứng, lịch sử, ACK/Resolve và CSV | Biểu đồ quan sát tổng quát |
+| Grafana | Log Loki, KPI, hàng đợi và lịch sử sự cố, bằng chứng OSPF qua view PostgreSQL chỉ đọc | Thay đổi sự cố hoặc cấu hình nghiệp vụ |
+| API vận hành | Truy vấn sự kiện, topology, bằng chứng, ACK/Resolve, quản trị và báo cáo | Giao diện đồ họa |
 | Telegram worker | Rate limit, retry, allowlist, delivery receipt | Là nguồn sự thật của alert |
 
-PostgreSQL Phase 5 giữ aggregate state, acknowledgement và status audit. SQLite hiện hữu vẫn phục vụ dashboard cũ và test nhanh; chưa migration dữ liệu legacy tự động. Loki giữ log searchable, còn rsyslog raw spool vẫn là nguồn replay/bằng chứng gốc.
+PostgreSQL giữ aggregate state, acknowledgement và status audit. SQLite tiếp tục phục vụ journal, checkpoint, dữ liệu mô phỏng và chức năng Telegram legacy. Loki giữ log searchable, còn rsyslog raw spool vẫn là nguồn replay/bằng chứng gốc.
 
 ## Data flow và độ tin cậy
 
@@ -148,11 +149,10 @@ timestamp kỹ thuật. Sự cố đang mở tiếp tục hiện trong queue m�
 - Write coordinator ghi Loki trước PostgreSQL; replay được che duplicate theo `event_id`.
 - API và schema được mô tả tại [api.md](api.md) và [storage.md](storage.md).
 
-## Quyết định Phase 6
+## Quyết định Phase 6 (lịch sử)
 
-- Custom Dashboard tái sử dụng template/session/CSRF hiện hữu; `DASHBOARD_BACKEND` chọn legacy hoặc operational.
-- Loki cung cấp normalized event stream; PostgreSQL cung cấp aggregate stats, filter và lifecycle.
-- Grafana datasource/dashboard được provision read-only từ Git, không cấu hình tay trong UI.
+- Phase 6 đưa vào dashboard tùy chỉnh, Grafana và Telegram. Nhánh Grafana-only giữ Grafana và API vận hành.
+- Loki cung cấp normalized event stream. PostgreSQL cung cấp aggregate stats, filter và lifecycle.
 - Telegram claim atomically theo severity, event count và cooldown; update message đã lưu thay vì gửi bản trùng.
 - Semantics và giới hạn last-mile nằm trong [dashboard_notifications.md](dashboard_notifications.md).
 
@@ -211,11 +211,10 @@ Các mục Phase 1–8 bên dưới ghi các mốc gốc của dự án trước
 - Chỉ chạy một processor active cho một spool. `processor-state`, `syslog-raw`, PostgreSQL và Loki đều
   phải nằm trong kế hoạch backup; không xóa volume để xử lý lỗi.
 
-## Backend vận hành và frontend riêng
+## Backend vận hành và Grafana
 
-- FastAPI phục vụ API vận hành và dashboard Jinja ngay trong cùng tiến trình. Bearer session và
-  session cookie vận hành có digest riêng trong PostgreSQL. Dashboard Jinja giữ kiểm tra CSRF
-  cho mutation. Role được kiểm tra tại API trước khi trả dữ liệu hoặc sửa trạng thái.
+- FastAPI phục vụ API JSON. PostgreSQL lưu digest của bearer session có thể thu hồi.
+  API kiểm tra role trước khi trả dữ liệu hoặc sửa trạng thái. Trình duyệt cần gửi bearer header tường minh.
 - Processor ghi Loki và lưu xác nhận vào state SQLite trước khi ghi journal correlation.
   PostgreSQL cập nhật incident projection, catalog, registry, observation và rule quản lý trong
   cùng transaction. Catalog dùng `event_id` làm khóa duy nhất. Offset được checkpoint sau khi lưu
@@ -230,6 +229,6 @@ Các mục Phase 1–8 bên dưới ghi các mốc gốc của dự án trước
 - Topology kết hợp inventory do operator xác nhận với observation của OSPF. Mỗi mapping dùng
   scope, area, cặp Router ID và định danh link. Neighbor thiếu mapping giữ trạng thái chưa xác
   định. Cấu hình ban đầu không khai báo endpoint khi chưa có bằng chứng live.
-- Grafana dùng PostgreSQL views chỉ đọc cho KPI và dùng Loki cho truy vấn log kỹ thuật. Dashboard
-  summary và báo cáo API dùng chung định nghĩa KPI. Audit hành động bảo mật nằm riêng với event
+- Grafana dùng view PostgreSQL chỉ đọc cho KPI, lịch sử sự cố và trạng thái OSPF theo endpoint.
+  Loki phục vụ log kỹ thuật. Grafana KPI và báo cáo API dùng chung định nghĩa KPI. Audit bảo mật nằm riêng với event
   logs. [API](api-contract.md), [KPI](kpi-contract.md) và [Grafana](grafana-integration.md).

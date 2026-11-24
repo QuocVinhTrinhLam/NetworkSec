@@ -12,7 +12,7 @@ python -m pytest -m "not e2e and not syslog_integration and not storage_integrat
 ## Kiểm thử OSPF
 
 Fast checks dùng fixture mô phỏng và bao phủ parser hai vendor, tương thích schema,
-correlation, retry/checkpoint, Dashboard, Grafana provisioning và Telegram fake. Kiểm
+correlation, retry/checkpoint, API, Grafana provisioning và Telegram fake. Kiểm
 thử storage dưới đây chạy với PostgreSQL và Loki cô lập đã sẵn sàng. Nạp
 `NETWORKSEC_TEST_POSTGRES_DSN` và `NETWORKSEC_TEST_LOKI_URL` từ môi trường thử nghiệm.
 Tài khoản PostgreSQL phải tạo được schema riêng cho mỗi test.
@@ -22,11 +22,11 @@ python -m pytest tests/integration/test_postgres_ospf_lifecycle.py tests/integra
 ```
 
 - `test_postgres_ospf_lifecycle.py` kiểm tra migration tăng dần, transaction, replay,
-  stale Full, ACK, resolve, API/CSV và delivery claims với Telegram fake.
-- `test_ospf_spool_to_loki_incident_dashboard_and_telegram` dùng cả hai backend. Test
+  stale Full, ACK, resolve, API, Grafana views và delivery claims với Telegram fake.
+- `test_ospf_spool_to_loki_incident_api_grafana_views_and_telegram` dùng cả hai backend. Test
   chạy với hai CHR và với một cặp MikroTik–Cisco để kiểm tra tương thích. Mỗi ca đưa
   envelope Syslog mô phỏng vào reader thực, restart worker bằng state cũ, kiểm tra hai
-  Down cùng incident, Full đến muộn, chứng cứ Loki, session/ACK và một lần cập nhật
+  Down cùng incident, Full đến muộn, chứng cứ Loki, bearer/ACK và một lần cập nhật
   thẻ Telegram giả lập sau recovery. Syslog từ thiết bị thật được nghiệm thu riêng.
 - `test_ospf_loki_queries.py` chạy sáu biểu thức của dashboard OSPF trên Loki với dữ
   liệu phiên bản `1.0` và `1.1`. Grafana runtime vẫn cần smoke test khi deploy.
@@ -68,7 +68,7 @@ volume), gửi 50 event còn lại, xác minh aggregate `count=100`, Loki/raw tr
 notification claim không lặp. Nạp `POSTGRES_DSN` từ environment bảo vệ, không ghi DSN vào command log:
 
 ```bash
-docker compose up -d --build --wait postgres loki rsyslog processor dashboard
+docker compose up -d --build --wait
 RUN_PROCESSOR_INTEGRATION=1 python -m pytest -m processor_integration tests/integration
 ```
 
@@ -76,12 +76,13 @@ Test này chưa được chạy trên workstation nếu Docker không sẵn có;
 
 Không dùng `docker compose down -v`; raw spool và database là evidence/recovery state.
 
-## UI E2E
+## Grafana browser smoke test
 
-```bash
-python -m playwright install chromium
-python -m pytest -m e2e
-```
+Trên stack test, đăng nhập Grafana và kiểm tra health của hai datasource. Mở **Incident
+Operations**, chọn một incident fixture và xác nhận lịch sử chỉ hiển thị incident đó. Đối
+chiếu trạng thái operator và thời điểm Full đã xác nhận với `/api/v1/alerts/{id}/evidence`.
+Mở **OSPF Observability** và kiểm tra hai router xuất hiện trong log stream. Kiểm tra
+`/dashboard`, `/login` và `/docs` trên cổng API trả `404`. [Cấu hình datasource](grafana-integration.md).
 
 ## Evidence checklist
 

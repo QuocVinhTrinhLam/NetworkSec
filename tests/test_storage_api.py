@@ -13,6 +13,7 @@ from app.config import BASE_DIR, Settings
 from app.main import create_app
 from app.parsers import parse_syslog
 from app.schemas.api import AlertLifecycleStatus, AlertRecord, StorageHealthResponse
+from app.schemas.backend import Login, Principal, Role
 from app.schemas.correlation import AggregatedAlert
 from app.schemas.event import (
     EventOutcome,
@@ -31,10 +32,10 @@ from app.storage.base import (
     StorageUnavailableError,
 )
 from app.storage.loki import LokiLogStorage
-from app.web.auth import hash_password
 
 BASE_TIME = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
 ALERT_ID = "a" * 64
+TEST_AUTH = {"Authorization": "Bearer test-only-token"}
 
 
 def _event() -> NormalizedEvent:
@@ -155,55 +156,46 @@ class FakeAlertStorage:
         return True
 
 
-def _client(
-    tmp_path: Path, *, raise_server_exceptions: bool = True
-) -> tuple[TestClient, FakeLogStorage, FakeAlertStorage]:
+class FakeAccounts:
+    def authenticate(self, token: str) -> Principal | None:
+        if token == "test-only-token":
+            return Principal(username="admin", role=Role.ADMIN)
+        return None
+
+    def login(self, _credentials: Login) -> None:
+        return None
+
+
+def _client(tmp_path: Path) -> tuple[TestClient, FakeLogStorage, FakeAlertStorage]:
     logs = FakeLogStorage()
     alerts = FakeAlertStorage()
     settings = Settings(
-        database_path=tmp_path / "api.db",
-        severity_config=BASE_DIR / "config" / "severity.yaml",
-        rules_catalog=BASE_DIR / "config" / "rules_catalog.yaml",
-        admin_username="admin",
-        admin_password_hash=hash_password("test-password", iterations=10_000),
+        database_path=tmp_path / "unused.db",
+        postgres_dsn="",
         session_secret="test-session-secret-with-enough-entropy",
     )
-    return (
-        TestClient(
-            create_app(settings, log_storage=logs, alert_storage=alerts),
-            follow_redirects=False,
-            raise_server_exceptions=raise_server_exceptions,
-        ),
-        logs,
-        alerts,
-    )
+    app = create_app(settings, log_storage=logs, alert_storage=alerts)
+    app.state.accounts = FakeAccounts()
+    return TestClient(app), logs, alerts
 
 
-def _login(client: TestClient) -> str:
-    page = client.get("/login")
-    token = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    response = client.post(
-        "/login",
-        data={"username": "admin", "password": "test-password", "csrf": token},
-    )
-    assert response.status_code == 303
-    dashboard = client.get("/dashboard")
-    return dashboard.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+def _authorize(client: TestClient) -> None:
+    client.headers.update(TEST_AUTH)
 
 
-def test_api_requires_session_and_migrates_storage(tmp_path: Path) -> None:
+def test_api_requires_bearer_and_migrates_storage(tmp_path: Path) -> None:
     client, _, alerts = _client(tmp_path)
     with client:
         assert alerts.migrated is True
         response = client.get("/api/v1/alerts")
     assert response.status_code == 401
-    assert response.headers["www-authenticate"] == "Session"
+    assert response.headers["www-authenticate"] == "Bearer"
 
 
 def test_event_query_filters_and_pagination(tmp_path: Path) -> None:
     client, logs, _ = _client(tmp_path)
     with client:
-        _login(client)
+        _authorize(client)
         response = client.get(
             "/api/v1/events",
             params={
@@ -237,7 +229,7 @@ def test_events_api_opts_into_ospf_with_legacy_items(tmp_path: Path) -> None:
     logs.events = (_event(), ospf)
 
     with client:
-        _login(client)
+        _authorize(client)
         default = client.get("/api/v1/events")
         extended = client.get("/api/v1/events", params={"include_ospf": True})
 
@@ -257,7 +249,7 @@ def test_events_api_opts_into_ospf_with_legacy_items(tmp_path: Path) -> None:
 def test_alert_api_default_queue_includes_old_active_alerts(tmp_path: Path) -> None:
     client, _, alerts = _client(tmp_path)
     with client:
-        _login(client)
+        _authorize(client)
         assert client.get("/api/v1/alerts?status=acknowledged").status_code == 200
         assert alerts.query is not None and alerts.query.include_active_before_start
         assert (
@@ -271,7 +263,7 @@ def test_alert_evidence_is_an_authenticated_additive_endpoint(tmp_path: Path) ->
     path = f"/api/v1/alerts/{ALERT_ID}"
     with client:
         assert client.get(path + "/evidence").status_code == 401
-        _login(client)
+        _authorize(client)
         detail = client.get(path)
         evidence = client.get(path + "/evidence")
         assert client.get(f"/api/v1/alerts/{'0' * 64}/evidence").status_code == 404
@@ -289,7 +281,7 @@ def test_alert_evidence_is_an_authenticated_additive_endpoint(tmp_path: Path) ->
 def test_alert_api_accepts_operational_metadata_filters(tmp_path: Path) -> None:
     client, _, alerts = _client(tmp_path)
     with client:
-        _login(client)
+        _authorize(client)
         response = client.get(
             "/api/v1/alerts",
             params={"source_ip": "2001:0db8::1", "rule_id": "interface-link-state", "search": "%_"},
@@ -310,7 +302,7 @@ def test_alert_api_accepts_operational_metadata_filters(tmp_path: Path) -> None:
 def test_alert_query_acknowledgement_and_status_update(tmp_path: Path) -> None:
     client, _, alerts = _client(tmp_path)
     with client:
-        csrf = _login(client)
+        _authorize(client)
         listed = client.get(
             "/api/v1/alerts",
             params={
@@ -323,17 +315,19 @@ def test_alert_query_acknowledgement_and_status_update(tmp_path: Path) -> None:
             },
         )
         forbidden = client.post(
-            f"/api/v1/alerts/{ALERT_ID}/acknowledge", json={"note": "investigating"}
+            f"/api/v1/alerts/{ALERT_ID}/acknowledge",
+            headers={"Authorization": "Bearer invalid"},
+            json={"note": "investigating"},
         )
         acknowledged = client.post(
             f"/api/v1/alerts/{ALERT_ID}/acknowledge",
             json={"note": "investigating"},
-            headers={"X-CSRF-Token": csrf},
+            headers=TEST_AUTH,
         )
         resolved = client.patch(
             f"/api/v1/alerts/{ALERT_ID}/status",
             json={"status": "resolved", "note": "link stable"},
-            headers={"X-CSRF-Token": csrf},
+            headers=TEST_AUTH,
         )
 
     assert listed.status_code == 200
@@ -345,7 +339,7 @@ def test_alert_query_acknowledgement_and_status_update(tmp_path: Path) -> None:
     assert alerts.query is not None
     assert alerts.query.status == "new"
     assert alerts.query.page_size == 20
-    assert forbidden.status_code == 403
+    assert forbidden.status_code == 401
     assert acknowledged.status_code == 200
     assert acknowledged.json()["acknowledged_by"] == "admin"
     assert resolved.status_code == 200
@@ -355,7 +349,7 @@ def test_alert_query_acknowledgement_and_status_update(tmp_path: Path) -> None:
 def test_api_validates_time_range_ids_and_payloads(tmp_path: Path) -> None:
     client, _, _ = _client(tmp_path)
     with client:
-        csrf = _login(client)
+        _authorize(client)
         reversed_range = client.get(
             "/api/v1/events",
             params={"start": BASE_TIME.isoformat(), "end": BASE_TIME.isoformat()},
@@ -364,7 +358,7 @@ def test_api_validates_time_range_ids_and_payloads(tmp_path: Path) -> None:
         extra_field = client.patch(
             f"/api/v1/alerts/{ALERT_ID}/status",
             json={"status": "resolved", "unexpected": True},
-            headers={"X-CSRF-Token": csrf},
+            headers=TEST_AUTH,
         )
 
     assert reversed_range.status_code == 422
@@ -384,7 +378,7 @@ def test_api_normalizes_backend_unavailable_errors(tmp_path: Path) -> None:
     logs.query_events = unavailable_events  # type: ignore[method-assign]
     alerts.query_alerts = unavailable_alerts  # type: ignore[method-assign]
     with client:
-        _login(client)
+        _authorize(client)
         event_response = client.get("/api/v1/events")
         alert_response = client.get("/api/v1/alerts")
 
@@ -413,7 +407,7 @@ def test_qa01_events_api_rejects_malformed_and_expired_cursors(tmp_path: Path) -
     }
     expired_token = base64.urlsafe_b64encode(json.dumps(expired).encode()).decode().rstrip("=")
     with client:
-        _login(client)
+        _authorize(client)
         for token, detail in (
             ("invalid!", "invalid event pagination cursor"),
             (expired_token, "event pagination cursor is outside the query range"),
@@ -444,43 +438,38 @@ def test_qa03_events_api_reports_protocol_failure_without_upstream_payload(tmp_p
 
     logs.query_events = query_events  # type: ignore[method-assign]
     with client:
-        _login(client)
+        _authorize(client)
         response = client.get("/api/v1/events")
     assert response.status_code == 502
     assert response.json() == {"detail": "Loki query failed"}
 
 
-def test_qa_http_route_authentication_and_public_contracts(tmp_path: Path) -> None:
+def test_api_has_no_html_routes_and_requires_bearer_for_operations(tmp_path: Path) -> None:
     client, _, _ = _client(tmp_path)
     item = f"/api/v1/alerts/{ALERT_ID}"
     with client:
-        assert client.get("/health").json() == {"status": "ok", "mode": "mock"}
-        assert client.get("/login").status_code == 200
+        assert client.get("/health").json() == {"status": "ok", "mode": "api"}
+        assert client.get("/openapi.json").status_code == 200
         for path in (
             "/",
+            "/login",
             "/dashboard",
             "/partials/dashboard",
             "/alerts",
             "/alerts/export.csv",
-            f"/alerts/{ALERT_ID}",
             "/events",
             "/devices",
             "/scenarios",
-            "/scenarios/export.csv",
+            "/docs",
+            "/redoc",
+            "/docs/oauth2-redirect",
+            "/static/styles.css",
+            "/api/v1/dashboard/summary",
         ):
-            response = client.get(path)
-            assert response.status_code == 303 and response.headers["location"] == "/login", path
-        for path, data in (
-            ("/logout", {"csrf": "invalid"}),
-            (f"/alerts/{ALERT_ID}/ack", {"csrf": "invalid"}),
-            (f"/alerts/{ALERT_ID}/resolve", {"csrf": "invalid"}),
-            (
-                "/scenarios",
-                {"csrf": "invalid", "technique": "QA", "tool": "QA", "expected_rule": "QA"},
-            ),
-        ):
-            assert client.post(path, data=data).status_code == 303, path
-        protected = (
+            assert client.get(path).status_code == 404, path
+        for path in ("/login", "/logout", f"/alerts/{ALERT_ID}/ack"):
+            assert client.post(path).status_code == 404, path
+        for method, path in (
             ("GET", "/api/v1/storage/health"),
             ("GET", "/api/v1/events"),
             ("GET", "/api/v1/alerts"),
@@ -488,18 +477,9 @@ def test_qa_http_route_authentication_and_public_contracts(tmp_path: Path) -> No
             ("GET", item + "/evidence"),
             ("POST", item + "/acknowledge"),
             ("PATCH", item + "/status"),
-        )
-        for method, path in protected:
-            response = client.request(method, path, json={"status": "resolved"})
-            assert response.status_code == 401 and response.headers["www-authenticate"] == "Session"
-        for path in (
-            "/docs",
-            "/redoc",
-            "/docs/oauth2-redirect",
-            "/openapi.json",
-            "/static/styles.css",
         ):
-            assert client.get(path).status_code == 200, path
+            response = client.request(method, path, json={"status": "resolved"})
+            assert response.status_code == 401 and response.headers["www-authenticate"] == "Bearer"
 
 
 def test_qa_api_validation_credentials_and_diagnostic_redaction(tmp_path: Path) -> None:
@@ -512,19 +492,16 @@ def test_qa_api_validation_credentials_and_diagnostic_redaction(tmp_path: Path) 
     item = f"/api/v1/alerts/{ALERT_ID}"
     unknown = "/api/v1/alerts/" + "e" * 64
     with client:
-        login = client.get("/login")
-        assert "frame-ancestors 'none'" in login.headers["content-security-policy"]
-        assert login.headers["x-content-type-options"] == "nosniff"
-        cookie = login.headers["set-cookie"].lower()
-        assert "httponly" in cookie and "samesite=lax" in cookie
-        token = login.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
         bad = client.post(
-            "/login", data={"username": "unknown", "password": "qa-invalid", "csrf": token}
+            "/api/v1/auth/login", json={"username": "unknown", "password": "qa-invalid"}
         )
         assert bad.status_code == 401
         assert "qa-invalid" not in bad.text
-        csrf = _login(client)
-        assert csrf != token
+        assert "frame-ancestors 'none'" in bad.headers["content-security-policy"]
+        assert bad.headers["x-content-type-options"] == "nosniff"
+        assert bad.headers["x-frame-options"] == "DENY"
+        assert "set-cookie" not in bad.headers
+        _authorize(client)
         health = client.get("/api/v1/storage/health")
         snapshot = StorageHealthResponse.model_validate(health.json())
         assert (snapshot.status, snapshot.loki, snapshot.postgres) == (
@@ -538,8 +515,7 @@ def test_qa_api_validation_credentials_and_diagnostic_redaction(tmp_path: Path) 
         assert client.get("/api/v1/alerts?page=0").status_code == 422
         assert client.get("/api/v1/events?page_size=501").status_code == 422
         assert client.get("/api/v1/events?vendor=unknown").status_code == 422
-        headers = {"X-CSRF-Token": csrf}
-        assert client.patch(item + "/status", json={"status": "resolved"}).status_code == 403
+        headers = TEST_AUTH
         assert (
             client.post(
                 item + "/acknowledge",
@@ -563,69 +539,23 @@ def test_qa_api_validation_credentials_and_diagnostic_redaction(tmp_path: Path) 
             == 404
         )
         assert alerts.record.status is AlertLifecycleStatus.NEW
-        assert client.post("/logout", data={"csrf": csrf}).status_code == 303
-        assert client.get(item).status_code == 401
 
 
-def test_qa_non_ascii_csrf_gets_normal_forbidden_response(tmp_path: Path) -> None:
-    client, _, _ = _client(tmp_path, raise_server_exceptions=False)
-    with client:
-        client.get("/login")
-        response = client.post(
-            "/login", data={"username": "guest", "password": "qa-placeholder", "csrf": "é"}
-        )
-    assert response.status_code == 403
-
-
-def test_qa02_csrf_blocks_invalid_or_missing_tokens_on_web_and_api(tmp_path: Path) -> None:
+def test_browser_cookies_and_csrf_headers_cannot_authorize_api_writes(tmp_path: Path) -> None:
     client, _, alerts = _client(tmp_path)
+    ack = f"/api/v1/alerts/{ALERT_ID}/acknowledge"
     with client:
-        assert client.get("/login").status_code == 200
-        credentials = {"username": "admin", "password": "test-password"}
-        for submitted in ({}, {"csrf": ""}, {"csrf": "wrong"}, {"csrf": "e\u0301"}, {"csrf": "😀"}):
-            response = client.post("/login", data=credentials | submitted)
-            assert response.status_code == 403
-            assert response.json() == {"detail": "Invalid CSRF token"}
-            assert client.get(f"/api/v1/alerts/{ALERT_ID}").status_code == 401
-
-        csrf = _login(client)
-        path = f"/alerts/{ALERT_ID}"
-        for route, data in (
-            ("/logout", {}),
-            (path + "/ack", {}),
-            (path + "/resolve", {}),
-            ("/scenarios", {"technique": "QA", "tool": "QA", "expected_rule": "QA"}),
+        client.cookies.set("session", "test-only-token")
+        for headers in (
+            {},
+            {"X-CSRF-Token": "wrong"},
+            {"X-CSRF-Token": "test-only-token"},
+            {"Authorization": "Basic test-only-token"},
+            {"Authorization": "Bearer invalid"},
         ):
-            assert client.post(route, data=data).status_code == 403
-        api_ack = f"/api/v1{path}/acknowledge"
-        for headers in ({}, {"X-CSRF-Token": "wrong"}, [(b"x-csrf-token", b"\xff")]):
-            assert client.post(api_ack, headers=headers, json={}).status_code == 403
+            assert client.post(ack, headers=headers, json={}).status_code == 401
         assert alerts.record.status is AlertLifecycleStatus.NEW
-        response = client.post(api_ack, headers={"X-CSRF-Token": csrf}, json={})
-        assert response.status_code == 200 and response.json()["status"] == "acknowledged"
-        assert client.post("/logout", data={"csrf": csrf}).status_code == 303
-
-
-def test_qa_malformed_session_cookie_grants_no_access(tmp_path: Path) -> None:
-    client, _, _ = _client(tmp_path)
-    with client:
-        client.cookies.set("session", "qa-invalid-session-format")
-        assert client.get("/api/v1/alerts").status_code == 401
-        assert client.get("/dashboard").headers["location"] == "/login"
-
-
-def test_qa_validation_error_does_not_echo_login_password(tmp_path: Path) -> None:
-    client, _, _ = _client(tmp_path)
-    with client:
-        login = client.get("/login")
-        token = login.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-        marker = "QA_SYNTHETIC_LOGIN_FIELD_"
-        response = client.post(
-            "/login",
-            data={"username": "qa-placeholder", "password": marker + "x" * 1024, "csrf": token},
-        )
-    assert response.status_code == 422
-    assert marker not in response.text, "422 response contains the synthetic password marker"
+        assert client.post(ack, headers=TEST_AUTH, json={}).json()["status"] == "acknowledged"
 
 
 def test_qa06_validation_keeps_all_errors_without_secret_values(
@@ -634,15 +564,13 @@ def test_qa06_validation_keeps_all_errors_without_secret_values(
     client, _, alerts = _client(tmp_path)
     marker = "QA_SYNTHETIC_PRIVATE_VALUE"
     with client:
-        login = client.get("/login")
-        token = login.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
         oversized = client.post(
-            "/login",
-            data={"username": "u" * 101, "password": marker + "x" * 1024, "csrf": token},
+            "/api/v1/auth/login",
+            json={"username": "u" * 101, "password": marker + "x" * 1024, marker: marker},
         )
-        csrf = _login(client)
+        _authorize(client)
         ack = f"/api/v1/alerts/{ALERT_ID}/acknowledge"
-        headers = {"X-CSRF-Token": csrf}
+        headers = TEST_AUTH
         invalid = client.post(
             ack,
             headers=headers,
@@ -662,6 +590,7 @@ def test_qa06_validation_keeps_all_errors_without_secret_values(
     assert {tuple(error["loc"]): error["type"] for error in oversized.json()["detail"]} == {
         ("body", "username"): "string_too_long",
         ("body", "password"): "string_too_long",
+        ("body", "unknown_field"): "extra_forbidden",
     }
     assert {tuple(error["loc"]): error["type"] for error in invalid.json()["detail"]} == {
         ("body", "note"): "string_type",

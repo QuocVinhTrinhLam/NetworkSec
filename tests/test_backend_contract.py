@@ -16,6 +16,7 @@ from app.schemas.event import EventSeverity
 from app.services.backend import EventFilters, date_range, redact
 from app.services.grafana import dashboard_link
 from app.web.accounts import LoginThrottle
+from app.web.backend import _csv_cell
 from app.web.body_limit import API_BODY_LIMIT
 from scripts.export_openapi import build_spec
 
@@ -92,7 +93,13 @@ def test_redaction_and_bounded_utc_ranges() -> None:
         date_range(end - timedelta(days=91), end)
 
 
-def test_frontend_spec_matches_routes_and_protected_operations(tmp_path: Path) -> None:
+def test_csv_formula_guard_handles_whitespace_and_invisible_prefixes() -> None:
+    for cell in ("  =1+1", "\n@SUM(A:A)", "\ufeff-2+2", "\xa0\u200b +2+2", "\tplain"):
+        assert _csv_cell(cell) == "'" + cell
+    assert _csv_cell("text") == "text"
+
+
+def test_operational_spec_matches_routes_and_protected_operations(tmp_path: Path) -> None:
     generated = build_spec()
     artifact = Path("docs/openapi.json")
     assert json.loads(artifact.read_text(encoding="utf-8")) == generated
@@ -122,3 +129,23 @@ def test_frontend_spec_matches_routes_and_protected_operations(tmp_path: Path) -
     export = generated["paths"]["/api/v1/reports/export"]["get"]["responses"]["200"]
     assert set(export["content"]) == {"application/json", "text/csv"}
     assert {"X-Report-Truncated", "Content-Disposition"} <= set(export["headers"])
+
+
+def test_production_api_uses_trusted_hosts_and_leaves_sqlite_to_the_bot(tmp_path: Path) -> None:
+    database_path = tmp_path / "legacy.db"
+    app = create_app(
+        Settings(
+            app_env="production",
+            app_url="https://api.example.test",
+            database_path=database_path,
+            postgres_dsn="",
+            session_secret="test-only-session-key-that-is-long-enough",
+            session_https_only=True,
+            trusted_hosts=("api.example.test",),
+        )
+    )
+    with TestClient(app, base_url="https://api.example.test") as client:
+        assert client.get("/health").headers["strict-transport-security"] == "max-age=31536000"
+        assert client.get("/health", headers={"Host": "unknown.example.test"}).status_code == 400
+        assert client.get("/openapi.json").status_code == 404
+    assert not database_path.exists()

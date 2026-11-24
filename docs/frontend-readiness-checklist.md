@@ -1,5 +1,7 @@
 # Frontend readiness checklist
 
+> This checklist records the frontend handoff at `5527465`. The current integration contract is in the [operational API reference](api-contract.md).
+
 **Verdict · PARTIAL.** The versioned contract is ready for client implementation against the checked-in OpenAPI 3.1 snapshot. This workspace contains the server-rendered dashboard. The separate dashboard was unavailable for end-to-end verification.
 
 - [x] Use the generated OpenAPI spec for all 42 versioned operations. Regenerate with `python -m scripts.export_openapi` from the repository root. The audit test compares the snapshot to the actual route declarations. Production serves neither Swagger UI nor the OpenAPI route. [OpenAPI spec](openapi.json)

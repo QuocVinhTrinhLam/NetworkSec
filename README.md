@@ -18,15 +18,15 @@ GNS3 / Loghub / Syslog Generator
           ▼                 ▼
          Loki           PostgreSQL
           │                 │
-       Grafana      Dashboard / Telegram
+       Grafana      Grafana / API / Telegram
 ```
 
 - `rsyslog` nhận Syslog TCP/UDP và giữ raw log.
 - Worker có checkpoint, khôi phục sau restart và chống xử lý trùng.
 - Loki lưu sự kiện chuẩn hóa cho Grafana và tra cứu qua API. PostgreSQL lưu sự cố, lịch sử,
   ACK, tham chiếu bằng chứng và trạng thái gửi Telegram.
-- Custom Dashboard FastAPI/Jinja dùng cho hàng đợi, ACK, Resolve và xuất CSV. Telegram chạy
-  qua profile tùy chọn `notifications`.
+- Grafana là giao diện giám sát duy nhất. FastAPI cung cấp API JSON cho ACK, Resolve,
+  bằng chứng, xuất CSV và quản trị. Telegram chạy qua profile `notifications`.
 - Topology lab dùng hai MikroTik CHR chạy RouterOS v7 và OSPFv2 Area 0, một switch
   Cisco IOSvL2 và pfSense tùy chọn. Fixture mô phỏng kiểm tra Down, Full và các trạng
   thái trung gian của hai CHR. Hai góc nhìn dùng cùng một sự cố khi mapping link khớp.
@@ -53,7 +53,7 @@ PowerShell dùng `.venv\Scripts\Activate.ps1` và `Copy-Item .env.example .env`.
 - `POSTGRES_PASSWORD`
 - `SESSION_SECRET` dài ít nhất 32 ký tự ngẫu nhiên
 - `ADMIN_PASSWORD_HASH`
-- `GRAFANA_ADMIN_PASSWORD` nếu chạy Grafana
+- `GRAFANA_ADMIN_PASSWORD`
 
 Kiểm tra Compose mà không in resolved environment:
 
@@ -64,16 +64,20 @@ docker compose --file compose.yaml config --quiet
 Khởi động pipeline chính:
 
 ```bash
-docker compose up -d --build --wait postgres loki rsyslog processor dashboard
-docker compose up -d --wait grafana
+docker compose up -d --build --wait
 docker compose ps
 ```
 
 Địa chỉ mặc định:
 
-- Dashboard: `http://127.0.0.1:8000`
-- Grafana: `http://127.0.0.1:3000`
-- Syslog TCP/UDP: `127.0.0.1:5514`
+- Grafana tại `http://127.0.0.1:3000`
+- API JSON tại `http://127.0.0.1:8000`
+- Syslog TCP/UDP tại `127.0.0.1:5514`
+
+Thiết lập tài khoản PostgreSQL chỉ đọc và datasource Grafana để xem **Incident Operations**
+và **Network Event KPIs**. [Cấu hình Grafana](docs/grafana-integration.md).
+Nếu nâng cấp từ `5527465`, dừng service `dashboard` cũ trước khi khởi động `api` trên cùng cổng.
+[Quy trình nâng cấp](docs/deployment.md#nâng-cấp-grafana-only).
 
 Khi operator triển khai Ubuntu để nhận Syslog từ GNS3, đặt `SYSLOG_BIND_HOST` thành địa chỉ
 NIC lab thực tế đã được cấu hình trên Ubuntu. Xem [hướng dẫn triển khai và kiểm thử live](docs/deployment.md#triển-khai-ospf-trên-ubuntu).
@@ -110,7 +114,7 @@ Sau khi điền `TELEGRAM_BOT_TOKEN` và `ALLOWED_CHAT_IDS` trong `.env`:
 docker compose --profile notifications up -d --build bot
 ```
 
-`APP_URL` nên là URL Dashboard qua mạng mà người nhận có thể truy cập. Bot gửi một thẻ Down
+Đặt `GRAFANA_PUBLIC_URL` thành URL Grafana mà người nhận có thể truy cập. Bot gửi một thẻ Down
 cho mỗi sự cố đủ ngưỡng và cập nhật thẻ sau xác nhận Full. Xem [hành vi gửi và retry](docs/dashboard_notifications.md).
 
 ## Kiểm thử
@@ -125,10 +129,9 @@ python -m pytest -m "not e2e and not syslog_integration and not storage_integrat
 [Testing runbook](docs/testing.md#kiểm-thử-ospf) có lệnh chạy PostgreSQL/Loki cô lập và
 phân biệt kiểm thử phần mềm, kiểm thử TCP/UDP qua Docker, snapshot GNS3 và kiểm thử thiết bị live.
 
-Dashboard frontend riêng dùng REST API qua `/api/v1`. Chạy dashboard với PostgreSQL và Loki,
-cấu hình origin của frontend trong `FRONTEND_ORIGINS` rồi đăng nhập qua
-`POST /api/v1/auth/login`. Dùng API catalog cho sự kiện mới và API cursor khi cần truy vấn các log
-đã có trong Loki trước khi nâng cấp. [Hướng dẫn tích hợp frontend](docs/frontend-integration.md).
+Đăng nhập qua `POST /api/v1/auth/login` và gửi bearer token cho các thao tác vận hành.
+Dùng API catalog cho sự kiện mới và API cursor để truy vấn log lịch sử còn trong Loki.
+[Hợp đồng API](docs/api-contract.md).
 
 ## Tài liệu
 
@@ -140,11 +143,12 @@ cấu hình origin của frontend trong `FRONTEND_ORIGINS` rồi đăng nhập q
 - [Kiểm thử](docs/testing.md) và [benchmark](docs/performance.md)
 - [Nghiệm thu backend độc lập](docs/independent-backend-audit.md), [OpenAPI](docs/openapi.json) và [checklist Ubuntu/GNS3](docs/ubuntu-deployment-checklist.md)
 - [GNS3 integration](gns3/docs/phase7-syslog-integration.md) và [demo](docs/demo-phase8.md)
+- [So sánh Grafana-only với backend `5527465`](docs/grafana-only-refactor.md)
 
 ## An toàn
 
 - Không commit `.env`, token, password, private key, log thật hoặc packet capture.
-- Giữ dashboard, Loki, PostgreSQL và Grafana trên loopback mặc định.
+- Giữ API, Loki, PostgreSQL và Grafana trên loopback mặc định.
 - Xem Syslog, HTTP input và Telegram data là dữ liệu không tin cậy.
 - Không chạy `docker compose down -v`; thao tác này xóa volume và raw spool.
 - Không sửa GNS3, deploy, commit hoặc push khi chưa được phê duyệt.

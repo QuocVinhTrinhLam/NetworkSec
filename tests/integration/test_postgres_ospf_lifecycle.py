@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import csv
-import io
 import json
 import os
 import shutil
@@ -364,10 +362,20 @@ def test_migration_preserves_existing_alert_reference_and_notification(
     assert backfilled is not None and backfilled.event_refs[0].source_ip == "192.0.2.88"
 
 
-def test_authenticated_operational_routes_use_postgres_for_filters_csv_and_lifecycle(
+def _authorize_operator(client: TestClient) -> None:
+    login = client.post(
+        "/api/v1/auth/login",
+        json={"username": "test-operator", "password": "test-password"},
+    )
+    assert login.status_code == 200, login.text
+    client.headers["Authorization"] = "Bearer " + login.json()["access_token"]
+
+
+def test_authenticated_operational_api_uses_postgres_for_filters_and_lifecycle(
     storage: PostgresAlertStorage,
     observe: Callable[[str, int], OspfCorrelationSnapshot],
     tmp_path: Path,
+    isolated_dsn: str,
 ) -> None:
     seconds_before_now = int((datetime.now(UTC) - BASE_TIME).total_seconds()) - 60
     snapshot = observe("r1-down", seconds_before_now)
@@ -393,7 +401,7 @@ def test_authenticated_operational_routes_use_postgres_for_filters_csv_and_lifec
     app = create_app(
         Settings(
             database_path=tmp_path / "web.db",
-            dashboard_backend="operational",
+            postgres_dsn=isolated_dsn,
             session_secret="networksec-integration-test-secret-value",
             admin_username="test-operator",
             admin_password_hash=hash_password("test-password", iterations=10000),
@@ -402,26 +410,13 @@ def test_authenticated_operational_routes_use_postgres_for_filters_csv_and_lifec
         alert_storage=storage,
     )
     with TestClient(app, follow_redirects=False) as client:
-        login = client.get("/login").text
-        token = login.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-        assert (
-            client.post(
-                "/login",
-                data={"username": "test-operator", "password": "test-password", "csrf": token},
-            ).status_code
-            == 303
-        )
-        dashboard = client.get("/dashboard")
-        assert dashboard.status_code == 200
-        csrf = dashboard.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+        _authorize_operator(client)
         match = {"rule_id": "interface-link-state", "source_ip": "192.0.2.88", "search": "%_"}
-        alert_page = client.get("/alerts", params=match)
-        assert alert_page.status_code == 200 and aggregate.aggregate_id in alert_page.text
-        assert incident_id not in alert_page.text
-        csv_rows = list(
-            csv.DictReader(io.StringIO(client.get("/alerts/export.csv", params=match).text))
-        )
-        assert len(csv_rows) == 1 and csv_rows[0]["source_ip"] == "192.0.2.88"
+        alert_page = client.get("/api/v1/alerts", params=match)
+        assert alert_page.status_code == 200
+        assert [row["aggregate_id"] for row in alert_page.json()["items"]] == [
+            aggregate.aggregate_id
+        ]
         assert client.get("/api/v1/alerts", params={"source_ip": "192.0.2.1"}).json()["total"] == 0
         literal = client.get("/api/v1/alerts", params={"search": "%_"}).json()
         assert [item["aggregate_id"] for item in literal["items"]] == [aggregate.aggregate_id]
@@ -435,38 +430,30 @@ def test_authenticated_operational_routes_use_postgres_for_filters_csv_and_lifec
         neighbor_page = client.get("/api/v1/alerts", params={"device_name": "192.0.2.2"})
         assert neighbor_page.json()["items"][0]["aggregate_id"] == incident_id
 
-        path = f"/alerts/{incident_id}"
-        assert "Awaiting confirmed Full" in client.get(path).text
-        assert client.post(path + "/resolve", data={"csrf": "wrong"}).status_code == 403
-        assert (
-            client.post(path + "/ack", data={"csrf": csrf, "note": "Acknowledged"}).status_code
-            == 303
-        )
-        assert (
-            client.post(
-                path + "/resolve", data={"csrf": csrf, "note": "Cable replaced"}
-            ).status_code
-            == 303
-        )
-        api_path = f"/api/v1{path}"
-        resolved = client.get(api_path).json()
+        api_path = f"/api/v1/alerts/{incident_id}"
         evidence_url = api_path + "/evidence"
+        assert client.get(evidence_url).json()["ospf"]["technical_recovered_at"] is None
+        assert (
+            client.post(api_path + "/acknowledge", json={"note": "Acknowledged"}).status_code == 200
+        )
+        assert (
+            client.patch(
+                api_path + "/status", json={"status": "resolved", "note": "Cable replaced"}
+            ).status_code
+            == 200
+        )
+        resolved = client.get(api_path).json()
         evidence = client.get(evidence_url).json()
         late_note = {"note": "Late page"}
-        assert client.post(api_path + "/acknowledge", json=late_note).status_code == 403
-        headers = {"X-CSRF-Token": csrf}
-        late_ack = client.post(api_path + "/acknowledge", headers=headers, json=late_note)
+        late_ack = client.post(api_path + "/acknowledge", json=late_note)
         late_patch_ack = client.patch(
-            api_path + "/status", headers=headers, json={"status": "acknowledged", **late_note}
+            api_path + "/status", json={"status": "acknowledged", **late_note}
         )
         assert late_ack.status_code == late_patch_ack.status_code == 200
         assert late_ack.json() == late_patch_ack.json() == resolved
         assert resolved["status"] == "resolved" and resolved["note"] == "Cable replaced"
-        late_form = client.post(path + "/ack", data={"csrf": csrf, **late_note})
-        assert late_form.status_code == 303 and late_form.headers["location"] == path
         assert client.get(evidence_url).json() == evidence
-        finished = client.get(path)
-        assert "Cable replaced" in finished.text and "Awaiting confirmed Full" in finished.text
+        assert evidence["ospf"]["technical_recovered_at"] is None
         assert evidence["ospf"]["adjacency"]["area"] == "0.0.0.0"
         assert [entry["status"] for entry in evidence["history"]] == [
             "new",
@@ -507,7 +494,7 @@ async def test_ospf_telegram_lifecycle_uses_one_card_per_chat_and_confirmed_reco
     settings = Settings(
         allowed_chat_ids={10, 20},
         minimum_severity="medium",
-        app_url="https://dashboard.example.com/lab",
+        grafana_public_url="https://metrics.example.com/lab",
     )
     gateway = FakeOspfGateway()
     now = datetime.now(UTC)
@@ -523,7 +510,9 @@ async def test_ospf_telegram_lifecycle_uses_one_card_per_chat_and_confirmed_reco
     assert "0.0.0.0" in gateway.sends[0][1] and "192.0.2.2" in gateway.sends[0][1]
     markup = gateway.sends[0][2]
     assert markup is not None
-    assert markup["inline_keyboard"][0][0]["url"].endswith(f"/lab/alerts/{incident_id}")
+    assert markup["inline_keyboard"][0][0]["url"].endswith(
+        f"/lab/d/network-incident-operations?var-incident={incident_id}"
+    )
 
     storage.apply_ospf_snapshot(observe("r1-full", 3))
     assert await OspfNotificationWorker(settings, storage, gateway).run_once(now) == 0
@@ -551,7 +540,7 @@ async def test_ospf_telegram_reschedules_only_known_first_send_rejection_and_ret
     observe: Callable[[str, int], OspfCorrelationSnapshot],
 ) -> None:
     settings = Settings(
-        allowed_chat_ids={10}, minimum_severity="medium", app_url="http://localhost:8000"
+        allowed_chat_ids={10}, minimum_severity="medium", grafana_public_url="http://localhost:3000"
     )
     gateway = FakeOspfGateway()
     now = datetime.now(UTC)
@@ -706,7 +695,7 @@ def test_ospf_notification_migration_reuses_existing_card(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("dual_routeros", [False, True], ids=["mixed-vendor", "dual-routeros"])
-async def test_ospf_spool_to_loki_incident_dashboard_and_telegram(
+async def test_ospf_spool_to_loki_incident_api_grafana_views_and_telegram(
     storage: PostgresAlertStorage,
     isolated_dsn: str,
     ospf_rules_path: Path,
@@ -749,13 +738,12 @@ async def test_ospf_spool_to_loki_incident_dashboard_and_telegram(
     storage_writer = StorageWriter(loki, storage)
     settings = Settings(
         database_path=tmp_path / "web.db",
-        dashboard_backend="operational",
         session_secret="networksec-integration-test-secret-value",
         admin_username="test-operator",
         admin_password_hash=hash_password("test-password", iterations=10000),
         allowed_chat_ids={10},
         minimum_severity="medium",
-        app_url="https://dashboard.example.com",
+        grafana_public_url="https://metrics.example.com",
         postgres_dsn=isolated_dsn,
         correlation_rules_path=ospf_rules_path,
     )
@@ -822,8 +810,11 @@ async def test_ospf_spool_to_loki_incident_dashboard_and_telegram(
         "inline_keyboard": [
             [
                 {
-                    "text": "Open dashboard",
-                    "url": f"https://dashboard.example.com/alerts/{incident_id}",
+                    "text": "Open in Grafana",
+                    "url": (
+                        "https://metrics.example.com/d/network-incident-operations"
+                        f"?var-incident={incident_id}"
+                    ),
                 }
             ]
         ]
@@ -861,19 +852,10 @@ async def test_ospf_spool_to_loki_incident_dashboard_and_telegram(
                     assert cursor is None
             return event_ids
 
-        detail_path = f"/alerts/{incident_id}"
-        alert_api_path = f"/api/v1{detail_path}"
+        alert_api_path = f"/api/v1/alerts/{incident_id}"
         evidence_path = alert_api_path + "/evidence"
         assert client.get(evidence_path).status_code == 401
-        login = client.get("/login").text
-        csrf = login.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-        assert (
-            client.post(
-                "/login",
-                data={"username": "test-operator", "password": "test-password", "csrf": csrf},
-            ).status_code
-            == 303
-        )
+        _authorize_operator(client)
         assert client.get("/api/v1/storage/health").json()["status"] == "ok"
         down_topology = client.get("/api/v1/topology")
         assert down_topology.status_code == 200, down_topology.text
@@ -889,15 +871,23 @@ async def test_ospf_spool_to_loki_incident_dashboard_and_telegram(
             "192.0.2.1",
             "192.0.2.2",
         }
-        detail = client.get(detail_path)
-        assert "Awaiting confirmed Full" in detail.text
-        csrf = detail.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+        assert opened["ospf"]["technical_recovered_at"] is None
         assert (
             client.post(
-                detail_path + "/ack", data={"csrf": csrf, "note": "Investigating transit"}
+                alert_api_path + "/acknowledge", json={"note": "Investigating transit"}
             ).status_code
-            == 303
+            == 200
         )
+        with psycopg.connect(isolated_dsn) as connection:
+            assert connection.execute(
+                "SELECT status, technical_recovered_at FROM grafana_incidents "
+                "WHERE incident_id = %s",
+                (incident_id,),
+            ).fetchone() == ("acknowledged", None)
+            endpoints = connection.execute(
+                "SELECT local_router_id, neighbor_state FROM grafana_ospf_endpoints"
+            ).fetchall()
+            assert set(endpoints) == {("192.0.2.1", "DOWN"), ("192.0.2.2", "DOWN")}
 
         # Restart between Down and Full, then deliver an older R2 Full out of order.
         consumer = worker()
@@ -930,13 +920,23 @@ async def test_ospf_spool_to_loki_incident_dashboard_and_telegram(
             ("acknowledged", "operator"),
             ("resolved", "ospf_recovery"),
         ]
-        detail = client.get(detail_path).text
-        assert "Investigating transit" in detail and "test-operator" in detail
+        with psycopg.connect(isolated_dsn) as connection:
+            assert connection.execute(
+                "SELECT status, source FROM grafana_incident_history "
+                "WHERE incident_id = %s ORDER BY change_id",
+                (incident_id,),
+            ).fetchall() == [
+                ("new", "system"),
+                ("acknowledged", "operator"),
+                ("resolved", "ospf_recovery"),
+            ]
+            assert connection.execute(
+                "SELECT DISTINCT neighbor_state FROM grafana_ospf_endpoints"
+            ).fetchall() == [("FULL",)]
 
         resolved = client.get(alert_api_path).json()
         late_ack = client.post(
             alert_api_path + "/acknowledge",
-            headers={"X-CSRF-Token": csrf},
             json={"note": "Delayed ACK from earlier page"},
         )
         assert late_ack.status_code == 200 and late_ack.json() == resolved
@@ -951,7 +951,7 @@ async def test_ospf_spool_to_loki_incident_dashboard_and_telegram(
         assert len(observed_ids) == 6 and r1_pending_ids | r2_pending_ids < observed_ids
         (recovered_link,) = client.get("/api/v1/topology").json()["links"]
         assert recovered_link["id"] == down_link["id"] and recovered_link["status"] == "up"
-        summary = client.get("/api/v1/dashboard/summary", params={"start": base.isoformat()})
+        summary = client.get("/api/v1/reports/summary", params={"start": base.isoformat()})
         assert summary.status_code == 200, summary.text
         assert summary.json()["total_events"] == 6
         assert summary.json()["resolved_incidents"] == 1
